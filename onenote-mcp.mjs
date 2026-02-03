@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
-import { McpServer } from './typescript-sdk/dist/esm/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@microsoft/microsoft-graph-client';
-import { StdioServerTransport } from './typescript-sdk/dist/esm/server/stdio.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
-import { DeviceCodeCredential } from '@azure/identity';
+import { InteractiveBrowserCredential } from '@azure/identity';
 import fetch from 'node-fetch';
 
 // Load environment variables
@@ -36,174 +36,170 @@ const server = new McpServer(
   }
 );
 
-// Try to read the stored access token
+// Token storage with expiry tracking
 let accessToken = null;
-try {
-  if (fs.existsSync(tokenFilePath)) {
-    const tokenData = fs.readFileSync(tokenFilePath, 'utf8');
-    try {
-      // Try to parse as JSON first (new format)
-      const parsedToken = JSON.parse(tokenData);
-      accessToken = parsedToken.token;
-    } catch (parseError) {
-      // Fall back to using the raw token (old format)
-      accessToken = tokenData;
-    }
-  }
-} catch (error) {
-  console.error('Error reading access token file:', error.message);
-}
-
-// Alternatively, check if token is in environment variables
-if (!accessToken && process.env.GRAPH_ACCESS_TOKEN) {
-  accessToken = process.env.GRAPH_ACCESS_TOKEN;
-}
-
-let graphClient = null;
+let tokenExpiresAt = null;
 
 // Client ID for Microsoft Graph API access
 const clientId = '14d82eec-204b-4c2f-b7e8-296a70dab67e'; // Microsoft Graph Explorer client ID
 const scopes = ['Notes.Read.All', 'Notes.ReadWrite.All', 'User.Read'];
 
-// Function to ensure Graph client is created
-async function ensureGraphClient() {
-  if (!graphClient) {
-    // Read token from file if it exists
-    try {
-      if (fs.existsSync(tokenFilePath)) {
-        const tokenData = fs.readFileSync(tokenFilePath, 'utf8');
-        try {
-          // Try to parse as JSON first (new format)
-          const parsedToken = JSON.parse(tokenData);
-          accessToken = parsedToken.token;
-        } catch (parseError) {
-          // Fall back to using the raw token (old format)
-          accessToken = tokenData;
-        }
+// Credential instance for token refresh
+let credential = null;
+
+let graphClient = null;
+
+// Load token from file
+function loadTokenFromFile() {
+  try {
+    if (fs.existsSync(tokenFilePath)) {
+      const tokenData = fs.readFileSync(tokenFilePath, 'utf8');
+      try {
+        const parsedToken = JSON.parse(tokenData);
+        accessToken = parsedToken.token;
+        tokenExpiresAt = parsedToken.expiresAt ? new Date(parsedToken.expiresAt) : null;
+      } catch (parseError) {
+        accessToken = tokenData;
+        tokenExpiresAt = null;
       }
-    } catch (error) {
-      console.error("Error reading token file:", error);
     }
+  } catch (error) {
+    console.error('Error reading access token file:', error.message);
+  }
+}
 
-    if (!accessToken) {
-      throw new Error("Access token not found. Please save access token first.");
-    }
+// Save token to file
+function saveTokenToFile(token, expiresAt) {
+  const tokenData = JSON.stringify({ 
+    token: token, 
+    expiresAt: expiresAt ? expiresAt.toISOString() : null 
+  });
+  fs.writeFileSync(tokenFilePath, tokenData);
+}
 
-    // Create Microsoft Graph client
-    graphClient = Client.init({
-      authProvider: (done) => {
-        done(null, accessToken);
+// Check if token is expired or about to expire (within 5 minutes)
+function isTokenExpired() {
+  if (!tokenExpiresAt) return true;
+  const bufferTime = 5 * 60 * 1000; // 5 minutes
+  return new Date().getTime() > (tokenExpiresAt.getTime() - bufferTime);
+}
+
+// Validate token by making a simple API call
+async function validateToken() {
+  if (!accessToken) return false;
+  
+  try {
+    const response = await fetch('https://graph.microsoft.com/v1.0/me', {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
       }
     });
+    return response.ok;
+  } catch (error) {
+    return false;
   }
+}
+
+// Authenticate using interactive browser flow
+async function authenticateInteractive() {
+  console.error('Starting interactive browser authentication...');
+  console.error('A browser window will open for you to sign in with your Microsoft account...');
+  
+  credential = new InteractiveBrowserCredential({
+    clientId: clientId,
+    redirectUri: 'http://localhost:8400'
+  });
+  
+  try {
+    const tokenResponse = await credential.getToken(scopes);
+    accessToken = tokenResponse.token;
+    tokenExpiresAt = tokenResponse.expiresOnTimestamp 
+      ? new Date(tokenResponse.expiresOnTimestamp) 
+      : new Date(Date.now() + 3600 * 1000); // Default 1 hour
+    
+    saveTokenToFile(accessToken, tokenExpiresAt);
+    console.error('Authentication successful!');
+    return true;
+  } catch (error) {
+    console.error('Authentication error:', error.message);
+    throw new Error(`Authentication failed: ${error.message}`);
+  }
+}
+
+// Refresh token using existing credential
+async function refreshToken() {
+  if (!credential) {
+    return false;
+  }
+  
+  try {
+    console.error('Attempting to refresh token...');
+    const tokenResponse = await credential.getToken(scopes);
+    accessToken = tokenResponse.token;
+    tokenExpiresAt = tokenResponse.expiresOnTimestamp 
+      ? new Date(tokenResponse.expiresOnTimestamp) 
+      : new Date(Date.now() + 3600 * 1000);
+    
+    saveTokenToFile(accessToken, tokenExpiresAt);
+    console.error('Token refreshed successfully!');
+    return true;
+  } catch (error) {
+    console.error('Token refresh failed:', error.message);
+    return false;
+  }
+}
+
+// Function to ensure Graph client is created with valid token
+async function ensureGraphClient() {
+  // Load token from file if not already loaded
+  if (!accessToken) {
+    loadTokenFromFile();
+  }
+  
+  // Also check environment variable
+  if (!accessToken && process.env.GRAPH_ACCESS_TOKEN) {
+    accessToken = process.env.GRAPH_ACCESS_TOKEN;
+  }
+  
+  // Check if we need to authenticate or refresh
+  let needsAuth = false;
+  
+  if (!accessToken) {
+    needsAuth = true;
+  } else if (isTokenExpired()) {
+    // Try to refresh first
+    const refreshed = await refreshToken();
+    if (!refreshed) {
+      const isValid = await validateToken();
+      if (!isValid) {
+        needsAuth = true;
+      }
+    }
+  } else {
+    // Token exists and not expired, but validate it
+    const isValid = await validateToken();
+    if (!isValid) {
+      const refreshed = await refreshToken();
+      if (!refreshed) {
+        needsAuth = true;
+      }
+    }
+  }
+  
+  // If we need to authenticate, do it now (blocking)
+  if (needsAuth) {
+    await authenticateInteractive();
+  }
+  
+  // Create or recreate the Graph client with current token
+  graphClient = Client.init({
+    authProvider: (done) => {
+      done(null, accessToken);
+    }
+  });
+  
   return graphClient;
 }
-
-// Create graph client with device code auth or access token
-async function createGraphClient() {
-  if (accessToken) {
-    // Use access token if available
-    graphClient = Client.initWithMiddleware({
-      authProvider: {
-        getAccessToken: async () => {
-          return accessToken;
-        }
-      }
-    });
-    return { type: 'token', client: graphClient };
-  } else {
-    // Use device code flow
-    const credential = new DeviceCodeCredential({
-      clientId: clientId,
-      userPromptCallback: (info) => {
-        // This will be shown to the user with the URL and code
-        console.error('\n' + info.message);
-      }
-    });
-
-    try {
-      // Get an access token using device code flow
-      const tokenResponse = await credential.getToken(scopes);
-      
-      // Save the token for future use
-      accessToken = tokenResponse.token;
-      fs.writeFileSync(tokenFilePath, JSON.stringify({ token: accessToken }));
-      
-      // Initialize Graph client with the token
-      graphClient = Client.initWithMiddleware({
-        authProvider: {
-          getAccessToken: async () => {
-            return accessToken;
-          }
-        }
-      });
-      
-      return { type: 'device_code', client: graphClient };
-    } catch (error) {
-      console.error('Authentication error:', error);
-      throw new Error(`Authentication failed: ${error.message}`);
-    }
-  }
-}
-
-// Tool for starting authentication flow
-server.tool(
-  "authenticate",
-  "Start the authentication flow with Microsoft Graph",
-  async () => {
-    try {
-      const result = await createGraphClient();
-      if (result.type === 'device_code') {
-        return { 
-          content: [
-            {
-              type: "text",
-              text: "Authentication started. Please check the console for the URL and code."
-            }
-          ]
-        };
-      } else {
-        return { 
-          content: [
-            {
-              type: "text",
-              text: "Already authenticated with an access token."
-            }
-          ]
-        };
-      }
-    } catch (error) {
-      console.error("Error in authentication:", error);
-      throw new Error(`Authentication failed: ${error.message}`);
-    }
-  }
-);
-
-// Tool for saving an access token provided by the user
-server.tool(
-  "saveAccessToken",
-  "Save a Microsoft Graph access token for later use",
-  async (params) => {
-    try {
-      // Save the token for future use
-      accessToken = params.random_string;
-      const tokenData = JSON.stringify({ token: accessToken });
-      fs.writeFileSync(tokenFilePath, tokenData);
-      await createGraphClient();
-      return { 
-        content: [
-          {
-            type: "text",
-            text: "Access token saved successfully"
-          }
-        ]
-      };
-    } catch (error) {
-      console.error("Error saving access token:", error);
-      throw new Error(`Failed to save access token: ${error.message}`);
-    }
-  }
-);
 
 // Tool for listing all notebooks
 server.tool(
@@ -321,26 +317,22 @@ server.tool(
   "Get the content of a page",
   async (params) => {
     try {
-      console.error("GetPage called with params:", params);
       await ensureGraphClient();
       
       // First, list all pages to find the one we want
       const pagesResponse = await graphClient.api('/me/onenote/pages').get();
-      console.error("Got", pagesResponse.value.length, "pages");
       
       let targetPage;
       
       // If a page ID is provided, use it to find the page
       if (params.random_string && params.random_string.length > 0) {
         const pageId = params.random_string;
-        console.error("Looking for page with ID:", pageId);
         
         // Look for exact match first
         targetPage = pagesResponse.value.find(p => p.id === pageId);
         
         // If no exact match, try matching by title
         if (!targetPage) {
-          console.error("No exact match, trying title search");
           targetPage = pagesResponse.value.find(p => 
             p.title && p.title.toLowerCase().includes(params.random_string.toLowerCase())
           );
@@ -348,14 +340,12 @@ server.tool(
         
         // If still no match, try partial ID match
         if (!targetPage) {
-          console.error("No title match, trying partial ID match");
           targetPage = pagesResponse.value.find(p => 
             p.id.includes(pageId) || pageId.includes(p.id)
           );
         }
       } else {
         // If no ID provided, use the first page
-        console.error("No ID provided, using first page");
         targetPage = pagesResponse.value[0];
       }
       
@@ -363,12 +353,8 @@ server.tool(
         throw new Error("Page not found");
       }
       
-      console.error("Target page found:", targetPage.title);
-      console.error("Page ID:", targetPage.id);
-      
       try {
         const url = `https://graph.microsoft.com/v1.0/me/onenote/pages/${targetPage.id}/content`;
-        console.error("Fetching content from:", url);
         
         // Make direct HTTP request with fetch
         const response = await fetch(url, {
@@ -382,7 +368,6 @@ server.tool(
         }
         
         const content = await response.text();
-        console.error(`Content received! Length: ${content.length} characters`);
         
         // Return the raw HTML content
         return {
@@ -394,9 +379,6 @@ server.tool(
           ]
         };
       } catch (error) {
-        console.error("Error getting content:", error);
-        
-        // Return a simple error message
         return {
           content: [
             {
@@ -407,7 +389,6 @@ server.tool(
         };
       }
     } catch (error) {
-      console.error("Error in getPage:", error);
       return {
         content: [
           {
@@ -521,15 +502,12 @@ server.tool(
 // Connect to stdio and start server
 async function main() {
   try {
-    // Connect to standard I/O
     const transport = new StdioServerTransport();
     await server.connect(transport);
     
-    console.error('Server started successfully.');
-    console.error('Use the "authenticate" tool to start the authentication flow,');
-    console.error('or use "saveAccessToken" if you already have a token.');
+    console.error('OneNote MCP Server started successfully.');
+    console.error('Authentication will be triggered automatically when needed.');
     
-    // Keep the process alive
     process.on('SIGINT', () => {
       process.exit(0);
     });
