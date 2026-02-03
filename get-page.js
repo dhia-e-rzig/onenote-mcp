@@ -1,16 +1,7 @@
 #!/usr/bin/env node
 
 import { Client } from '@microsoft/microsoft-graph-client';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-// Get current directory
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Path for storing the access token
-const tokenFilePath = path.join(__dirname, '.access-token.txt');
+import { loadToken, isTokenExpired } from './lib/token-store.js';
 
 // Get the page title from command line
 const pageTitle = process.argv[2];
@@ -19,31 +10,19 @@ if (!pageTitle) {
   process.exit(1);
 }
 
-// Function to read the access token
-function getAccessToken() {
-  try {
-    const tokenData = fs.readFileSync(tokenFilePath, 'utf8');
-    try {
-      // Try to parse as JSON first (new format)
-      const parsedToken = JSON.parse(tokenData);
-      return parsedToken.token;
-    } catch (parseError) {
-      // Fall back to using the raw token (old format)
-      return tokenData;
-    }
-  } catch (error) {
-    console.error('Error reading token:', error);
-    return null;
-  }
-}
-
 // Main function
 async function getPageContent() {
   try {
-    // Get the access token
-    const accessToken = getAccessToken();
+    // Load token from secure store
+    const { token: accessToken, expiresAt } = await loadToken();
+    
     if (!accessToken) {
-      console.error('No access token found');
+      console.error('No access token found. Please run: node authenticate.js');
+      return;
+    }
+    
+    if (isTokenExpired(expiresAt)) {
+      console.error('Token expired. Please run: node authenticate.js');
       return;
     }
     
@@ -79,7 +58,7 @@ async function getPageContent() {
     
     // Fetch the content
     const url = `https://graph.microsoft.com/v1.0/me/onenote/pages/${page.id}/content`;
-    console.log(`Fetching content from: ${url}`);
+    console.log(`Fetching content...`);
     
     const response = await fetch(url, {
       headers: {
@@ -88,7 +67,7 @@ async function getPageContent() {
     });
     
     if (!response.ok) {
-      throw new Error(`HTTP error! Status: ${response.status} ${response.statusText}`);
+      throw new Error(`HTTP error! Status: ${response.status}`);
     }
     
     const content = await response.text();
@@ -105,9 +84,8 @@ async function getPageContent() {
     console.log('\n--- END OF CONTENT ---\n');
     
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error:', error.message);
   }
 }
 
-// Run the function
 getPageContent(); 

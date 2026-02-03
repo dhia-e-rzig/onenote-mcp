@@ -1,42 +1,21 @@
 #!/usr/bin/env node
 
 import { Client } from '@microsoft/microsoft-graph-client';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-// Get current directory
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Path for storing the access token
-const tokenFilePath = path.join(__dirname, '.access-token.txt');
-
-// Function to read the access token
-function getAccessToken() {
-  try {
-    const tokenData = fs.readFileSync(tokenFilePath, 'utf8');
-    try {
-      // Try to parse as JSON first (new format)
-      const parsedToken = JSON.parse(tokenData);
-      return parsedToken.token;
-    } catch (parseError) {
-      // Fall back to using the raw token (old format)
-      return tokenData;
-    }
-  } catch (error) {
-    console.error('Error reading token:', error);
-    return null;
-  }
-}
+import { loadToken, isTokenExpired } from './lib/token-store.js';
 
 // Main function
 async function getPageContent() {
   try {
-    // Get the access token
-    const accessToken = getAccessToken();
+    // Load token from secure store
+    const { token: accessToken, expiresAt } = await loadToken();
+    
     if (!accessToken) {
-      console.error('No access token found');
+      console.error('No access token found. Please run: node authenticate.js');
+      return;
+    }
+    
+    if (isTokenExpired(expiresAt)) {
+      console.error('Token expired. Please run: node authenticate.js');
       return;
     }
     
@@ -66,7 +45,6 @@ async function getPageContent() {
     try {
       // Create direct HTTP request to the content endpoint
       const url = `https://graph.microsoft.com/v1.0/me/onenote/pages/${page.id}/content`;
-      console.log(`Making request to: ${url}`);
       
       const response = await fetch(url, {
         headers: {
@@ -75,7 +53,7 @@ async function getPageContent() {
       });
       
       if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status} ${response.statusText}`);
+        throw new Error(`HTTP error! Status: ${response.status}`);
       }
       
       const contentType = response.headers.get('content-type');
@@ -88,13 +66,12 @@ async function getPageContent() {
       // Don't save content to file - just confirm it worked
       console.log("Content retrieval successful! Privacy preserved - not saving to disk.");
     } catch (error) {
-      console.error("Error fetching content:", error);
+      console.error("Error fetching content:", error.message);
     }
     
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Error:", error.message);
   }
 }
 
-// Run the function
 getPageContent(); 

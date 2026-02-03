@@ -1,35 +1,8 @@
 #!/usr/bin/env node
 
 import { Client } from '@microsoft/microsoft-graph-client';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { JSDOM } from 'jsdom';
-
-// Get current directory
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Path for storing the access token
-const tokenFilePath = path.join(__dirname, '.access-token.txt');
-
-// Function to read the access token
-function getAccessToken() {
-  try {
-    const tokenData = fs.readFileSync(tokenFilePath, 'utf8');
-    try {
-      // Try to parse as JSON first (new format)
-      const parsedToken = JSON.parse(tokenData);
-      return parsedToken.token;
-    } catch (parseError) {
-      // Fall back to using the raw token (old format)
-      return tokenData;
-    }
-  } catch (error) {
-    console.error('Error reading token:', error);
-    return null;
-  }
-}
+import { loadToken, isTokenExpired } from './lib/token-store.js';
 
 // Extract readable text from HTML
 function extractReadableText(html) {
@@ -41,7 +14,6 @@ function extractReadableText(html) {
     const scripts = document.querySelectorAll('script');
     scripts.forEach(script => script.remove());
     
-    // Extract text from each paragraph, list item, heading, etc. and preserve structure
     let text = '';
     
     // Process headings
@@ -69,17 +41,6 @@ function extractReadableText(html) {
       text += '\n';
     });
     
-    // Process divs and spans (might contain important content)
-    document.querySelectorAll('div, span').forEach(element => {
-      // Only include direct text nodes that are not already included via paragraphs, lists, etc.
-      if (element.childNodes.length === 1 && element.childNodes[0].nodeType === 3) {
-        const content = element.textContent.trim();
-        if (content) {
-          text += `${content}\n\n`;
-        }
-      }
-    });
-    
     // Process tables
     document.querySelectorAll('table').forEach(table => {
       text += '\nTable content:\n';
@@ -92,25 +53,30 @@ function extractReadableText(html) {
       text += '\n';
     });
     
-    // Fallback: If no specific elements were processed, get all body text
+    // Fallback
     if (!text.trim()) {
       text = document.body.textContent.trim().replace(/\s+/g, ' ');
     }
     
     return text;
   } catch (error) {
-    console.error('Error extracting text:', error);
-    return 'Error: Could not extract readable text from HTML content.';
+    return 'Could not extract readable text from HTML content.';
   }
 }
 
 // Main function
 async function readAllPages() {
   try {
-    // Get the access token
-    const accessToken = getAccessToken();
+    // Load token from secure store
+    const { token: accessToken, expiresAt } = await loadToken();
+    
     if (!accessToken) {
-      console.error('No access token found');
+      console.error('No access token found. Please run: node authenticate.js');
+      return;
+    }
+    
+    if (isTokenExpired(expiresAt)) {
+      console.error('Token expired. Please run: node authenticate.js');
       return;
     }
     
@@ -140,7 +106,6 @@ async function readAllPages() {
       console.log(`==================================================================\n`);
       
       try {
-        // Create direct HTTP request to the content endpoint
         const url = page.contentUrl;
         
         const response = await fetch(url, {
@@ -150,7 +115,7 @@ async function readAllPages() {
         });
         
         if (!response.ok) {
-          console.error(`Error fetching ${page.title}: ${response.status} ${response.statusText}`);
+          console.error(`Error fetching ${page.title}: ${response.status}`);
           continue;
         }
         
@@ -160,16 +125,15 @@ async function readAllPages() {
         console.log(readableText);
         console.log("\n");
       } catch (error) {
-        console.error(`Error processing ${page.title}:`, error.message);
+        console.error(`Error processing ${page.title}`);
       }
     }
     
     console.log("\nAll pages have been read. You can now ask questions about their content.");
     
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Error:", error.message);
   }
 }
 
-// Run the function
 readAllPages(); 

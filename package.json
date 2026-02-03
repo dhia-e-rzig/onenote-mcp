@@ -1,7 +1,7 @@
 {
   "name": "mcp-server-onenote",
   "version": "0.1.0",
-  "description": "OneNote MCP Server Implementation with Device Code Authentication",
+  "description": "OneNote MCP Server with automatic browser-based authentication",
   "type": "module",
   "main": "onenote-mcp.mjs",
   "scripts": {
@@ -19,6 +19,7 @@
     "@modelcontextprotocol/sdk": "^1.25.3",
     "dotenv": "^16.0.0",
     "jsdom": "^26.0.0",
+    "keytar": "^7.9.0",
     "node-fetch": "^3.3.2",
     "open": "^10.1.0"
   },

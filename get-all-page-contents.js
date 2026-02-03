@@ -1,53 +1,24 @@
 #!/usr/bin/env node
 
 import { Client } from '@microsoft/microsoft-graph-client';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { JSDOM } from 'jsdom';
+import { loadToken, isTokenExpired } from './lib/token-store.js';
 
-// Get current directory
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Path for storing the access token
-const tokenFilePath = path.join(__dirname, '.access-token.txt');
-
-// Function to read the access token
-function getAccessToken() {
-  try {
-    const tokenData = fs.readFileSync(tokenFilePath, 'utf8');
-    try {
-      // Try to parse as JSON first (new format)
-      const parsedToken = JSON.parse(tokenData);
-      return parsedToken.token;
-    } catch (parseError) {
-      // Fall back to using the raw token (old format)
-      return tokenData;
-    }
-  } catch (error) {
-    console.error('Error reading token:', error);
-    return null;
-  }
-}
-
-// Function to extract text content from HTML
+// Function to extract text content from HTML (limited output for security)
 function extractTextContent(html) {
   try {
     const dom = new JSDOM(html);
     const document = dom.window.document;
     
-    // Extract main content
     const bodyText = document.body.textContent.trim();
     
-    // Create a summary (first 300 chars or so)
+    // Limit output to first 300 chars for summary
     const summary = bodyText.substring(0, 300).replace(/\s+/g, ' ');
     
     return summary.length < bodyText.length 
       ? `${summary}...` 
       : summary;
   } catch (error) {
-    console.error('Error extracting text:', error);
     return 'Could not extract text content';
   }
 }
@@ -55,10 +26,16 @@ function extractTextContent(html) {
 // Main function
 async function getAllPageContents() {
   try {
-    // Get the access token
-    const accessToken = getAccessToken();
+    // Load token from secure store
+    const { token: accessToken, expiresAt } = await loadToken();
+    
     if (!accessToken) {
-      console.error('No access token found');
+      console.error('No access token found. Please run: node authenticate.js');
+      return;
+    }
+    
+    if (isTokenExpired(expiresAt)) {
+      console.error('Token expired. Please run: node authenticate.js');
       return;
     }
     
@@ -85,7 +62,6 @@ async function getAllPageContents() {
       console.log(`\n===== ${page.title} =====`);
       
       try {
-        // Create direct HTTP request to the content endpoint
         const url = page.contentUrl;
         
         const response = await fetch(url, {
@@ -95,7 +71,7 @@ async function getAllPageContents() {
         });
         
         if (!response.ok) {
-          console.error(`Error fetching ${page.title}: ${response.status} ${response.statusText}`);
+          console.error(`Error fetching ${page.title}: ${response.status}`);
           continue;
         }
         
@@ -105,14 +81,13 @@ async function getAllPageContents() {
         console.log(`Last modified: ${new Date(page.lastModifiedDateTime).toLocaleString()}`);
         console.log(`Content summary: ${textSummary}`);
       } catch (error) {
-        console.error(`Error processing ${page.title}:`, error.message);
+        console.error(`Error processing ${page.title}`);
       }
     }
     
   } catch (error) {
-    console.error("Error:", error);
+    console.error("Error:", error.message);
   }
 }
 
-// Run the function
 getAllPageContents(); 
