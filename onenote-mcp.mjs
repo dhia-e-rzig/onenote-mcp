@@ -4,13 +4,13 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import dotenv from 'dotenv';
-import { PublicClientApplication } from '@azure/msal-node';
+import { PublicClientApplication, CryptoProvider } from '@azure/msal-node';
 import http from 'http';
 import fetch from 'node-fetch';
 import open from 'open';
 
 // Import security modules
-import { loadToken, saveToken, isTokenExpired, isValidTokenFormat } from './lib/token-store.js';
+import { loadToken, saveToken, loadRefreshToken, saveRefreshToken, saveAccountInfo, isTokenExpired, isValidTokenFormat } from './lib/token-store.js';
 import { validateSearchTerm, sanitizeHtmlContent, createSafeErrorMessage } from './lib/validation.js';
 import { rateLimiter } from './lib/rate-limiter.js';
 
@@ -18,8 +18,7 @@ import { rateLimiter } from './lib/rate-limiter.js';
 dotenv.config();
 
 // Client ID - Should be set via environment variable for production
-// Falls back to Graph Explorer ID for development only
-const clientId = process.env.AZURE_CLIENT_ID || '14d82eec-204b-4c2f-b7e8-296a70dab67e';
+const clientId = process.env.AZURE_CLIENT_ID || '813d941f-92ac-4ac0-94a2-1e89b720e15b';
 
 // Warn if using default client ID
 if (!process.env.AZURE_CLIENT_ID) {
@@ -28,8 +27,9 @@ if (!process.env.AZURE_CLIENT_ID) {
 }
 
 // OAuth scopes - use read-only by default, write only when needed
-const READ_SCOPES = ['Notes.Read.All', 'User.Read'];
-const WRITE_SCOPES = ['Notes.Read.All', 'Notes.ReadWrite.All', 'User.Read'];
+// Include offline_access for refresh tokens
+const READ_SCOPES = ['Notes.Read.All', 'User.Read', 'offline_access'];
+const WRITE_SCOPES = ['Notes.Read.All', 'Notes.ReadWrite.All', 'User.Read', 'offline_access'];
 
 // MSAL configuration
 const msalConfig = {
@@ -40,6 +40,7 @@ const msalConfig = {
 };
 
 const pca = new PublicClientApplication(msalConfig);
+const cryptoProvider = new CryptoProvider();
 
 // Create the MCP server
 const server = new McpServer(
@@ -90,6 +91,9 @@ async function validateToken() {
 async function authenticateInteractive(scopes = READ_SCOPES) {
   console.error('Starting interactive browser authentication...');
   
+  // Generate PKCE codes before starting the flow
+  const pkceCodes = await cryptoProvider.generatePkceCodes();
+  
   return new Promise((resolve, reject) => {
     const redirectUri = 'http://localhost:8400';
     
@@ -101,11 +105,12 @@ async function authenticateInteractive(scopes = READ_SCOPES) {
         const code = url.searchParams.get('code');
         
         try {
-          // Exchange code for token
+          // Exchange code for token with PKCE verifier
           const tokenRequest = {
             code: code,
             scopes: scopes,
-            redirectUri: redirectUri
+            redirectUri: redirectUri,
+            codeVerifier: pkceCodes.verifier
           };
           
           const response = await pca.acquireTokenByCode(tokenRequest);
@@ -142,10 +147,12 @@ async function authenticateInteractive(scopes = READ_SCOPES) {
     server.listen(8400, async () => {
       console.error('Waiting for authentication on http://localhost:8400...');
       
-      // Generate auth URL and open browser
+      // Generate auth URL and open browser with PKCE
       const authCodeUrlParameters = {
         scopes: scopes,
-        redirectUri: redirectUri
+        redirectUri: redirectUri,
+        codeChallenge: pkceCodes.challenge,
+        codeChallengeMethod: 'S256'
       };
       
       try {
@@ -167,6 +174,51 @@ async function authenticateInteractive(scopes = READ_SCOPES) {
 }
 
 /**
+ * Refresh the access token using the stored refresh token
+ * @returns {Promise<boolean>} - True if refresh succeeded
+ */
+async function refreshAccessToken() {
+  const refreshToken = await loadRefreshToken();
+  if (!refreshToken) {
+    console.error('No refresh token available');
+    return false;
+  }
+  
+  try {
+    console.error('Attempting to refresh access token...');
+    
+    const refreshRequest = {
+      refreshToken: refreshToken,
+      scopes: READ_SCOPES
+    };
+    
+    const response = await pca.acquireTokenByRefreshToken(refreshRequest);
+    
+    accessToken = response.accessToken;
+    tokenExpiresAt = response.expiresOn || new Date(Date.now() + 3600 * 1000);
+    
+    // Save new tokens
+    await saveToken(accessToken, tokenExpiresAt);
+    
+    // Save new refresh token if provided (token rotation)
+    if (response.refreshToken) {
+      await saveRefreshToken(response.refreshToken);
+    }
+    
+    // Update account info
+    if (response.account) {
+      await saveAccountInfo(response.account);
+    }
+    
+    console.error('Token refreshed successfully, expires:', tokenExpiresAt);
+    return true;
+  } catch (error) {
+    console.error('Failed to refresh token:', error.message);
+    return false;
+  }
+}
+
+/**
  * Ensure Graph client is created with valid token
  * @param {boolean} requireWrite - Whether write permissions are needed
  */
@@ -176,32 +228,32 @@ async function ensureGraphClient(requireWrite = false) {
     const stored = await loadToken();
     accessToken = stored.token;
     tokenExpiresAt = stored.expiresAt;
+    console.error('Loaded token from store, expires:', tokenExpiresAt);
   }
   
-  // Determine required scopes
-  const requiredScopes = requireWrite ? WRITE_SCOPES : READ_SCOPES;
-  
-  // Check if we need to authenticate
-  let needsAuth = false;
-  
+  // Check if we have a valid token format
   if (!accessToken || !isValidTokenFormat(accessToken)) {
-    console.error('No valid token found, authentication required');
-    needsAuth = true;
-  } else if (isTokenExpired(tokenExpiresAt)) {
-    // Token expired - validate it first (Microsoft tokens sometimes work past expiry)
-    console.error('Token appears expired, validating...');
-    const isValid = await validateToken();
-    if (!isValid) {
-      console.error('Token validation failed, re-authentication required');
-      needsAuth = true;
-    } else {
-      console.error('Token still valid despite expiry time');
+    // Try to refresh using stored refresh token
+    const refreshed = await refreshAccessToken();
+    if (!refreshed) {
+      throw new Error('No valid token found. Please run "node authenticate.js" first to sign in.');
     }
   }
   
-  // Only authenticate if we really need to (no token or token is invalid)
-  if (needsAuth) {
-    await authenticateInteractive(requiredScopes);
+  // If token appears expired, try to refresh it first
+  if (isTokenExpired(tokenExpiresAt)) {
+    console.error('Token appears expired, attempting refresh...');
+    const refreshed = await refreshAccessToken();
+    
+    if (!refreshed) {
+      // Refresh failed, validate current token with API call
+      console.error('Refresh failed, validating current token with API...');
+      const isValid = await validateToken();
+      if (!isValid) {
+        throw new Error('Token has expired and refresh failed. Please run "node authenticate.js" to sign in again.');
+      }
+      console.error('Token still valid despite expiry time');
+    }
   }
   
   // Create or recreate the Graph client with current token

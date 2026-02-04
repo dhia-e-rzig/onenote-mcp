@@ -1,12 +1,13 @@
 import { PublicClientApplication, CryptoProvider } from '@azure/msal-node';
-import { saveToken } from './lib/token-store.js';
+import { saveToken, saveRefreshToken, saveAccountInfo } from './lib/token-store.js';
 import http from 'http';
 import open from 'open';
 
 // Client ID - use environment variable for production
-const clientId = process.env.AZURE_CLIENT_ID || '813d941f-92ac-4ac0-94a2-1e89b720e15b';
+const clientId = '813d941f-92ac-4ac0-94a2-1e89b720e15b';
 
-const scopes = ['Notes.Read.All', 'Notes.ReadWrite.All', 'User.Read'];
+// OneNote scopes - Notes.ReadWrite includes create permissions
+const scopes = ['Notes.ReadWrite', 'User.Read', 'offline_access'];
 const redirectUri = 'http://localhost:8400';
 
 // MSAL configuration
@@ -49,6 +50,16 @@ async function authenticate() {
           const expiresAt = response.expiresOn || new Date(Date.now() + 3600 * 1000);
           await saveToken(response.accessToken, expiresAt);
           
+          // Save refresh token for persistent authentication
+          if (response.refreshToken) {
+            await saveRefreshToken(response.refreshToken);
+          }
+          
+          // Save account info for silent token acquisition
+          if (response.account) {
+            await saveAccountInfo(response.account);
+          }
+          
           res.writeHead(200, { 'Content-Type': 'text/html' });
           res.end(`<!DOCTYPE html>
 <html>
@@ -68,6 +79,7 @@ async function authenticate() {
           server.close();
           console.log('\nAuthentication successful!');
           console.log('Token stored securely in system credential manager.');
+          console.log('Your authentication will persist across MCP sessions.');
           resolve();
           
         } catch (error) {
@@ -153,7 +165,9 @@ async function authenticate() {
   });
 }
 
-authenticate().catch(error => {
+authenticate().then(() => {
+  process.exit(0);
+}).catch(error => {
   console.error('Authentication failed:', error.message);
   process.exit(1);
-}); 
+});
