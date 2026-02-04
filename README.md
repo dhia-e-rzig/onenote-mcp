@@ -162,6 +162,7 @@ The following tools are available for AI assistants, organized by operation type
 | `listSections` | List sections in a notebook | `notebookId` (optional) |
 | `getSection` | Get details of a specific section | `sectionId` |
 | `listSectionGroups` | List section groups in a notebook | `notebookId` (optional) |
+| `listSectionsInGroup` | List sections within a section group | `sectionGroupId` |
 | `listPages` | List pages in a section | `sectionId` (optional) |
 | `getPage` | Get page content by ID or title | `pageId` or `title` |
 
@@ -210,13 +211,13 @@ Use these lists to quickly configure which tools to enable based on access requi
 #### Read Only (Read + Search)
 
 ```
-"listNotebooks", "getNotebook", "listSections", "getSection", "listSectionGroups", "listPages", "getPage", "search", "searchNotebooks", "searchSections", "searchSectionGroups", "searchPages"
+"listNotebooks", "getNotebook", "listSections", "getSection", "listSectionGroups", "listSectionsInGroup", "listPages", "getPage", "search", "searchNotebooks", "searchSections", "searchSectionGroups", "searchPages"
 ```
 
 #### Read/Write (All Operations)
 
 ```
-"listNotebooks", "getNotebook", "listSections", "getSection", "listSectionGroups", "listPages", "getPage", "createNotebook", "createSection", "createPage", "updatePage", "deletePage", "search", "searchNotebooks", "searchSections", "searchSectionGroups", "searchPages"
+"listNotebooks", "getNotebook", "listSections", "getSection", "listSectionGroups", "listSectionsInGroup", "listPages", "getPage", "createNotebook", "createSection", "createPage", "updatePage", "deletePage", "search", "searchNotebooks", "searchSections", "searchSectionGroups", "searchPages"
 ```
 
 ## Example Interactions

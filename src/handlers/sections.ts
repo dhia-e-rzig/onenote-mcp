@@ -95,3 +95,25 @@ export async function handleListSectionGroups(notebookId?: string): Promise<Tool
     return errorResponse('List section groups', error);
   }
 }
+
+/**
+ * List all sections within a section group
+ */
+export async function handleListSectionsInGroup(sectionGroupId: string): Promise<ToolResponse> {
+  try {
+    if (!sectionGroupId) {
+      return successResponse({ error: 'sectionGroupId is required. Use listSectionGroups to find section group IDs.' });
+    }
+    
+    await ensureGraphClient();
+    const graphClient = getGraphClient()!;
+    
+    const response = await rateLimiter.execute(() => 
+      graphClient.api(`/me/onenote/sectionGroups/${sectionGroupId}/sections`).get()
+    );
+    
+    return successResponse(response.value);
+  } catch (error) {
+    return errorResponse('List sections in group', error);
+  }
+}

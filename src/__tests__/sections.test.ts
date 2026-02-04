@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { handleListSections, handleGetSection, handleCreateSection, handleListSectionGroups } from '../handlers/sections.js';
+import { handleListSections, handleGetSection, handleCreateSection, handleListSectionGroups, handleListSectionsInGroup } from '../handlers/sections.js';
 
 // Mock dependencies
 vi.mock('../lib/graph-client.js', () => ({
@@ -177,6 +177,40 @@ describe('Section Handlers', () => {
       mockGet.mockRejectedValue(new Error('API Error'));
       
       const result = await handleListSectionGroups();
+      
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.error).toBeDefined();
+    });
+  });
+
+  describe('handleListSectionsInGroup', () => {
+    test('returns sections within a section group', async () => {
+      const mockSections = [
+        { id: 's1', displayName: 'Section 1' },
+        { id: 's2', displayName: 'Section 2' }
+      ];
+      mockGet.mockResolvedValue({ value: mockSections });
+      
+      const result = await handleListSectionsInGroup('sg1');
+      
+      expect(mockApi).toHaveBeenCalledWith('/me/onenote/sectionGroups/sg1/sections');
+      
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed).toEqual(mockSections);
+    });
+
+    test('returns error when sectionGroupId is empty', async () => {
+      const result = await handleListSectionsInGroup('');
+      
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.error).toContain('sectionGroupId is required');
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    test('returns error response on API failure', async () => {
+      mockGet.mockRejectedValue(new Error('Not found'));
+      
+      const result = await handleListSectionsInGroup('invalid');
       
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.error).toBeDefined();

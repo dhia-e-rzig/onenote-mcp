@@ -8,6 +8,7 @@ import {
   handleGetSection,
   handleCreateSection,
   handleListSectionGroups,
+  handleListSectionsInGroup,
   handleListPages,
   handleGetPage,
   handleCreatePage,
@@ -103,6 +104,17 @@ export function registerTools(server: McpServer): void {
       }
     },
     ({ notebookId }) => handleListSectionGroups(notebookId)
+  );
+
+  server.registerTool(
+    'listSectionsInGroup',
+    {
+      description: 'List all sections within a specific section group. Section groups are folders that can contain sections.',
+      inputSchema: {
+        sectionGroupId: z.string().describe('The ID of the section group to list sections from. Required. Use listSectionGroups to find section group IDs.')
+      }
+    },
+    ({ sectionGroupId }) => handleListSectionsInGroup(sectionGroupId)
   );
 
   // ============================================
