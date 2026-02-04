@@ -20,9 +20,11 @@ let skipped = 0;
 let testNotebookId = null;
 let testSectionId = null;
 let testPageId = null;
+let testNotebookLink = null;
 let graphClient = null;
 
-const TEST_NOTEBOOK_NAME = `_MCP_Test_Notebook_${Date.now()}`;
+// Use a fixed name so we can reuse existing test notebooks
+const TEST_NOTEBOOK_NAME = '_MCP_Test_Notebook';
 const TEST_SECTION_NAME = 'Test Section';
 const TEST_PAGE_TITLE = 'Test Page';
 const TEST_PAGE_CONTENT = `
@@ -60,27 +62,64 @@ function skip(name, reason) {
 }
 
 /**
- * Create test notebook with section and page
+ * Create test notebook with section and page, or reuse existing one
  */
 async function setupTestNotebook() {
   console.log('\n🔨 Setting up test notebook...');
   
   try {
-    // Create test notebook
-    console.log(`   Creating notebook: "${TEST_NOTEBOOK_NAME}"...`);
-    const notebook = await graphClient.api('/me/onenote/notebooks').post({
-      displayName: TEST_NOTEBOOK_NAME
-    });
-    testNotebookId = notebook.id;
-    console.log(`   ✓ Notebook created (id: ${testNotebookId.substring(0, 20)}...)`);
+    // Check if test notebook already exists
+    console.log(`   Checking for existing notebook: "${TEST_NOTEBOOK_NAME}"...`);
+    const notebooks = await graphClient.api('/me/onenote/notebooks').get();
+    const existingNotebook = notebooks.value?.find(n => n.displayName === TEST_NOTEBOOK_NAME);
     
-    // Create test section
-    console.log(`   Creating section: "${TEST_SECTION_NAME}"...`);
-    const section = await graphClient.api(`/me/onenote/notebooks/${testNotebookId}/sections`).post({
-      displayName: TEST_SECTION_NAME
-    });
-    testSectionId = section.id;
-    console.log(`   ✓ Section created (id: ${testSectionId.substring(0, 20)}...)`);
+    if (existingNotebook) {
+      console.log('   ✓ Found existing test notebook, reusing it');
+      testNotebookId = existingNotebook.id;
+      testNotebookLink = existingNotebook.links?.oneNoteWebUrl?.href || null;
+      
+      // Get existing section
+      const sections = await graphClient.api(`/me/onenote/notebooks/${testNotebookId}/sections`).get();
+      const existingSection = sections.value?.find(s => s.displayName === TEST_SECTION_NAME);
+      
+      if (existingSection) {
+        testSectionId = existingSection.id;
+        console.log('   ✓ Found existing test section');
+        
+        // Delete old pages in the section
+        const pages = await graphClient.api(`/me/onenote/sections/${testSectionId}/pages`).get();
+        for (const page of pages.value || []) {
+          try {
+            await graphClient.api(`/me/onenote/pages/${page.id}`).delete();
+          } catch (e) { /* ignore */ }
+        }
+      } else {
+        // Create test section
+        console.log(`   Creating section: "${TEST_SECTION_NAME}"...`);
+        const section = await graphClient.api(`/me/onenote/notebooks/${testNotebookId}/sections`).post({
+          displayName: TEST_SECTION_NAME
+        });
+        testSectionId = section.id;
+        console.log(`   ✓ Section created`);
+      }
+    } else {
+      // Create new test notebook
+      console.log(`   Creating notebook: "${TEST_NOTEBOOK_NAME}"...`);
+      const notebook = await graphClient.api('/me/onenote/notebooks').post({
+        displayName: TEST_NOTEBOOK_NAME
+      });
+      testNotebookId = notebook.id;
+      testNotebookLink = notebook.links?.oneNoteWebUrl?.href || null;
+      console.log(`   ✓ Notebook created`);
+      
+      // Create test section
+      console.log(`   Creating section: "${TEST_SECTION_NAME}"...`);
+      const section = await graphClient.api(`/me/onenote/notebooks/${testNotebookId}/sections`).post({
+        displayName: TEST_SECTION_NAME
+      });
+      testSectionId = section.id;
+      console.log(`   ✓ Section created`);
+    }
     
     // Create test page
     console.log(`   Creating page: "${TEST_PAGE_TITLE}"...`);
@@ -89,7 +128,7 @@ async function setupTestNotebook() {
       .header('Content-Type', 'application/xhtml+xml')
       .post(TEST_PAGE_CONTENT);
     testPageId = page.id;
-    console.log(`   ✓ Page created (id: ${testPageId.substring(0, 20)}...)`);
+    console.log(`   ✓ Page created`);
     
     // Wait a moment for OneNote to sync
     console.log('   Waiting for sync...');
@@ -129,10 +168,18 @@ async function cleanupTestNotebook() {
       }
     }
     
-    // Note: Sections cannot be deleted via Graph API, only pages
-    // The notebook and section will remain - this is a Microsoft API limitation
-    console.log(`   ⚠ Note: Notebook "${TEST_NOTEBOOK_NAME}" cannot be deleted via API.`);
-    console.log('   Please manually delete it from OneNote if desired.');
+    // Show notebook link for manual cleanup
+    console.log('\n   ─────────────────────────────────────────────');
+    console.log(`   📋 MANUAL CLEANUP (Optional)`);
+    console.log('   ─────────────────────────────────────────────');
+    console.log(`   The Microsoft Graph API does not support deleting notebooks.`);
+    console.log(`   The test notebook will be reused for future test runs.`);
+    console.log(`\n   📓 "${TEST_NOTEBOOK_NAME}"`);
+    if (testNotebookLink) {
+      console.log(`\n   🔗 Direct link to delete: ${testNotebookLink}`);
+    }
+    console.log('\n   ─────────────────────────────────────────────');
+    
     console.log('   ✓ Cleanup complete!\n');
   } catch (error) {
     console.log(`   ⚠ Cleanup warning: ${error.message}`);
@@ -235,15 +282,31 @@ async function runTests() {
           console.log(`      Error: ${error.message}`);
         }
         
-        // Test: getPage content
+        // Test: getPage content (with retry for sync delay)
         console.log('\n   📖 getPage (content):');
         try {
-          const content = await graphClient.api(`/me/onenote/pages/${testPageId}/content`).get();
+          let content = null;
+          let retries = 3;
+          
+          while (retries > 0) {
+            try {
+              content = await graphClient.api(`/me/onenote/pages/${testPageId}/content`).get();
+              break;
+            } catch (e) {
+              retries--;
+              if (retries > 0) {
+                console.log(`      Waiting for page sync (${retries} retries left)...`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+              } else {
+                throw e;
+              }
+            }
+          }
+          
           test('getPage content API responds', true);
           
           // Check if content contains our test data
           const contentStr = typeof content === 'string' ? content : '';
-          const hasTestContent = contentStr.includes('MCP Test Page') || contentStr.includes('test page');
           test('getPage returns expected content', content !== null);
           console.log(`      Content type: ${typeof content}, length: ${contentStr.length || 0} chars`);
         } catch (error) {
