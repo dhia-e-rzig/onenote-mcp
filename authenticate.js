@@ -16,6 +16,7 @@ async function authenticate() {
   try {
     const credential = new InteractiveBrowserCredential({
       clientId: clientId,
+      tenantId: 'consumers',  // Use 'consumers' for personal Microsoft accounts, 'common' for both
       redirectUri: 'http://localhost:8400'
     });
 

@@ -83,6 +83,7 @@ async function authenticateInteractive(scopes = READ_SCOPES) {
   
   credential = new InteractiveBrowserCredential({
     clientId: clientId,
+    tenantId: 'consumers',  // Use 'consumers' for personal Microsoft accounts, 'common' for both
     redirectUri: 'http://localhost:8400'
   });
   
@@ -104,28 +105,6 @@ async function authenticateInteractive(scopes = READ_SCOPES) {
 }
 
 /**
- * Refresh token using existing credential
- */
-async function refreshToken() {
-  if (!credential) {
-    return false;
-  }
-  
-  try {
-    const tokenResponse = await credential.getToken(currentScopes);
-    accessToken = tokenResponse.token;
-    tokenExpiresAt = tokenResponse.expiresOnTimestamp 
-      ? new Date(tokenResponse.expiresOnTimestamp) 
-      : new Date(Date.now() + 3600 * 1000);
-    
-    await saveToken(accessToken, tokenExpiresAt);
-    return true;
-  } catch (error) {
-    return false;
-  }
-}
-
-/**
  * Ensure Graph client is created with valid token
  * @param {boolean} requireWrite - Whether write permissions are needed
  */
@@ -140,30 +119,25 @@ async function ensureGraphClient(requireWrite = false) {
   // Determine required scopes
   const requiredScopes = requireWrite ? WRITE_SCOPES : READ_SCOPES;
   
-  // Check if we need to authenticate or refresh
+  // Check if we need to authenticate
   let needsAuth = false;
   
   if (!accessToken || !isValidTokenFormat(accessToken)) {
+    console.error('No valid token found, authentication required');
     needsAuth = true;
   } else if (isTokenExpired(tokenExpiresAt)) {
-    const refreshed = await refreshToken();
-    if (!refreshed) {
-      const isValid = await validateToken();
-      if (!isValid) {
-        needsAuth = true;
-      }
-    }
-  } else {
+    // Token expired - validate it first (Microsoft tokens sometimes work past expiry)
+    console.error('Token appears expired, validating...');
     const isValid = await validateToken();
     if (!isValid) {
-      const refreshed = await refreshToken();
-      if (!refreshed) {
-        needsAuth = true;
-      }
+      console.error('Token validation failed, re-authentication required');
+      needsAuth = true;
+    } else {
+      console.error('Token still valid despite expiry time');
     }
   }
   
-  // If we need to authenticate, do it now (blocking)
+  // Only authenticate if we really need to (no token or token is invalid)
   if (needsAuth) {
     await authenticateInteractive(requiredScopes);
   }
