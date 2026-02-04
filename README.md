@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server implementation that enables AI language models like Claude and other LLMs to interact with Microsoft OneNote.
 
-> This project is based on [azure-onenote-mcp-server](https://github.com/ZubeidHendricks/azure-onenote-mcp-server) by Zubeid Hendricks, with modifications to simplify authentication and improve usability.
+> This project is based on [onenote-mcp](https://github.com/danosb/onenote-mcp), with modifications to improve authentication and usability.
 
 ## What Does This Do?
 
@@ -17,13 +17,13 @@ All of this happens directly through the AI interface without you having to swit
 
 ## Features
 
-- **Automatic authentication** - Browser-based Microsoft login triggered automatically when needed
-- **Token refresh** - Automatically refreshes tokens when expired, re-authenticates if refresh fails
-- **No manual setup** - No Azure portal configuration or API keys required
-- List all notebooks, sections, and pages
-- Create new pages with HTML content
-- Read complete page content, including HTML formatting
+- **Persistent authentication** - Authenticate once, stay logged in across sessions using refresh tokens
+- **Secure token storage** - Tokens stored in OS credential manager (Windows Credential Manager, macOS Keychain, Linux Secret Service)
+- **Automatic token refresh** - Silently refreshes expired tokens without user interaction
+- **Browser-based login** - Simple Microsoft OAuth login when needed
+- Full CRUD operations on notebooks, sections, and pages
 - Search across your notes
+- Rate limiting to prevent API throttling
 
 ## Installation
 
@@ -46,7 +46,15 @@ cd onenote-mcp
 npm install
 ```
 
-That's it! No additional configuration is needed.
+### Step 3: Authenticate (One-Time Setup)
+
+```bash
+node authenticate.js
+```
+
+A browser window will open for Microsoft login. After signing in, your credentials are securely stored and will persist across sessions.
+
+That's it! The server will automatically use your stored credentials.
 
 ## Setup for AI Assistants
 
@@ -61,13 +69,13 @@ That's it! No additional configuration is needed.
   "mcpServers": {
     "onenote": {
       "command": "node",
-      "args": ["Q:/Random Projects/onenote-mcp/onenote-mcp.mjs"]
+      "args": ["/absolute/path/to/onenote-mcp.mjs"]
     }
   }
 }
 ```
 
-> **Note:** Replace the path with the absolute path to your `onenote-mcp.mjs` file.
+> **Note:** Replace `/absolute/path/to/` with the actual path to your installation.
 
 4. Restart Cursor
 
@@ -100,24 +108,94 @@ Add to your VS Code `settings.json`:
     "servers": {
       "onenote": {
         "command": "node",
-        "args": ["Q:/Random Projects/onenote-mcp/onenote-mcp.mjs"]
+        "args": ["/absolute/path/to/onenote-mcp.mjs"]
       }
     }
   }
 }
 ```
 
+### GitHub Copilot CLI
+
+Add to your `~/.config/github-copilot/config.json` (Linux/macOS) or `%APPDATA%\github-copilot\config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "onenote": {
+      "command": "node",
+      "args": ["/absolute/path/to/onenote-mcp.mjs"]
+    }
+  }
+}
+```
+
+Then use with:
+```bash
+gh copilot chat --mcp onenote "List my OneNote notebooks"
+```
+
+### GitHub Copilot SDK (Node.js)
+
+```javascript
+import { CopilotClient } from '@github/copilot-sdk';
+import { spawn } from 'child_process';
+
+const client = new CopilotClient({
+  mcpServers: {
+    onenote: {
+      command: 'node',
+      args: ['/absolute/path/to/onenote-mcp.mjs']
+    }
+  }
+});
+
+// Use the OneNote tools
+const notebooks = await client.callTool('onenote', 'listNotebooks', {});
+console.log(notebooks);
+```
+
+### GitHub Copilot SDK (C#)
+
+```csharp
+using GitHub.Copilot.Sdk;
+
+var client = new CopilotClientBuilder()
+    .AddMcpServer("onenote", new McpServerConfig
+    {
+        Command = "node",
+        Args = new[] { @"C:\path\to\onenote-mcp.mjs" }
+    })
+    .Build();
+
+// Use the OneNote tools
+var notebooks = await client.CallToolAsync("onenote", "listNotebooks", new { });
+Console.WriteLine(notebooks);
+
+// Create a page
+var result = await client.CallToolAsync("onenote", "createPage", new 
+{
+    sectionId = "your-section-id",
+    title = "Meeting Notes",
+    content = "<p>Notes from today's meeting</p>"
+});
+```
+
 ## How Authentication Works
 
-**Authentication is fully automatic.** When you ask the AI to interact with OneNote:
+**Authentication persists across sessions.** Run `node authenticate.js` once, and you're set:
 
-1. The MCP server checks for a valid token
-2. If no token exists or it's expired, a browser window automatically opens
-3. Sign in with your Microsoft account
-4. The browser redirects back and authentication completes
-5. Your request continues automatically
+1. Browser opens for Microsoft OAuth login
+2. Sign in with your Microsoft account
+3. Refresh token is securely stored in your OS credential manager
+4. Future sessions automatically use the stored credentials
 
-You don't need to run any authentication commands or manage tokens manually.
+### Re-authentication
+
+You only need to re-authenticate if:
+- You revoke app permissions in your Microsoft account
+- The refresh token expires (typically 90 days of inactivity)
+- You manually clear credentials from your OS credential manager
 
 ### Token Management
 
@@ -134,15 +212,22 @@ You don't need to run any authentication commands or manage tokens manually.
 
 The following tools are available for AI assistants:
 
-| Tool | Description |
-|------|-------------|
-| `listNotebooks` | List all your OneNote notebooks |
-| `getNotebook` | Get details of a specific notebook |
-| `listSections` | List all sections in a notebook |
-| `listPages` | List all pages in a section |
-| `getPage` | Get the complete content of a page (HTML) |
-| `createPage` | Create a new page with HTML content |
-| `searchPages` | Search for pages by title |
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `listNotebooks` | List all your OneNote notebooks | - |
+| `getNotebook` | Get details of a specific notebook | `notebookId` (optional) |
+| `createNotebook` | Create a new notebook | `displayName` |
+| `listSections` | List sections in a notebook | `notebookId` (optional) |
+| `getSection` | Get details of a specific section | `sectionId` |
+| `createSection` | Create a new section | `notebookId`, `displayName` |
+| `listSectionGroups` | List section groups in a notebook | `notebookId` (optional) |
+| `listPages` | List pages in a section | `sectionId` (optional) |
+| `getPage` | Get page metadata | `pageId` or `title` |
+| `getPageContent` | Get full page content (HTML) | `pageId` |
+| `createPage` | Create a new page | `sectionId`, `title`, `content` (optional) |
+| `updatePage` | Append content to a page | `pageId`, `content`, `target` (optional) |
+| `deletePage` | Delete a page | `pageId` |
+| `searchPages` | Search for pages by title | `query`, `notebookId` (optional), `sectionId` (optional) |
 
 ## Example Interactions
 
@@ -179,9 +264,9 @@ AI: [uses getPage] Here's a summary of your project requirements: ...
 
 ### Token keeps expiring
 
-- This is normal - Microsoft tokens expire after ~1 hour
-- The server automatically refreshes tokens when needed
-- If refresh fails, you'll be prompted to sign in again
+- Refresh tokens last ~90 days of inactivity
+- Run `node authenticate.js` to re-authenticate
+- Check that your Microsoft account hasn't revoked app permissions
 
 ### Server won't start
 
@@ -237,32 +322,63 @@ Or in your MCP server configuration:
 ```
 
 To register your own Azure AD application:
-1. Go to [Azure Portal](https://portal.azure.com/) → Azure Active Directory → App registrations
+1. Go to [Azure Portal](https://portal.azure.com/) → Microsoft Entra ID → App registrations
 2. Click "New registration"
 3. Name your app (e.g., "OneNote MCP")
 4. Select "Accounts in any organizational directory and personal Microsoft accounts"
-5. Add redirect URI: `http://localhost:8400` (type: Web)
+5. Add redirect URI: `http://localhost:8400` (type: Mobile and desktop applications)
 6. Copy the Application (client) ID
-7. Under "API permissions", add:
-   - `Notes.Read.All` (read operations)
-   - `Notes.ReadWrite.All` (write operations)
+7. Under "API permissions", add Microsoft Graph permissions:
+   - `Notes.ReadWrite` (read and write notebooks)
    - `User.Read` (user profile)
+   - `offline_access` (refresh tokens)
 
 ## Direct Script Usage (Development)
 
-For testing purposes, you can run standalone scripts:
+For testing and development:
 
 ```bash
-# Manual authentication (creates token file)
+# Authenticate (one-time setup)
 node authenticate.js
 
-# List notebooks
+# Run the test suite
+node test-api.js
+
+# List notebooks (standalone test)
 node simple-onenote.js
+```
+
+### Running Tests
+
+The test suite validates authentication persistence and all MCP tools:
+
+```bash
+node test-api.js
+```
+
+Tests create a temporary `_MCP_Test_Notebook` that is reused across test runs. A link is provided at the end if you want to manually delete it.
+
+## Configuration
+
+All configuration is centralized in `lib/config.js`:
+
+```javascript
+// Azure AD settings
+clientId        // Your app's client ID
+authority       // Microsoft login endpoint
+redirectUri     // OAuth redirect (http://localhost:8400)
+scopes          // OAuth permissions
+
+// Storage
+keytarService   // Credential manager service name
+
+// Rate limiting
+rateLimitConfig // API throttling settings
 ```
 
 ## Credits
 
-Based on [azure-onenote-mcp-server](https://github.com/ZubeidHendricks/azure-onenote-mcp-server) by Zubeid Hendricks.
+Based on [onenote-mcp](https://github.com/danosb/onenote-mcp) by danosb.
 
 ## License
 
