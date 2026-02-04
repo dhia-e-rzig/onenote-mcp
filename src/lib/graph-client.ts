@@ -1,13 +1,14 @@
 import { Client } from '@microsoft/microsoft-graph-client';
 import { PublicClientApplication } from '@azure/msal-node';
 import { loadToken, saveToken, loadRefreshToken, saveRefreshToken, saveAccountInfo, isTokenExpired, isValidTokenFormat } from './token-store.js';
-import { msalConfig } from './config.js';
+import { msalConfig, scopes } from './config.js';
 
 // ============================================
 // Constants
 // ============================================
 
-const READ_SCOPES: string[] = ['Notes.Read.All', 'User.Read', 'offline_access'];
+// Use the same scopes that were used during authentication
+const REFRESH_SCOPES: string[] = scopes;
 
 // ============================================
 // State Management
@@ -69,7 +70,7 @@ async function refreshAccessToken(): Promise<boolean> {
     
     const response = await pca.acquireTokenByRefreshToken({
       refreshToken,
-      scopes: READ_SCOPES
+      scopes: REFRESH_SCOPES
     });
     
     if (!response) {
@@ -94,7 +95,17 @@ async function refreshAccessToken(): Promise<boolean> {
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('Failed to refresh token:', message);
+    const errorDetails = error instanceof Error && 'errorCode' in error 
+      ? ` (code: ${(error as { errorCode: string }).errorCode})` 
+      : '';
+    console.error('Failed to refresh token:', message + errorDetails);
+    
+    // Log additional details for common MSAL errors
+    if (message.includes('invalid_grant') || message.includes('AADSTS')) {
+      console.error('This usually means the refresh token has expired or been revoked.');
+      console.error('Please run "npm run auth" to re-authenticate.');
+    }
+    
     return false;
   }
 }
