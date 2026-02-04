@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server implementation that enables AI language models like Claude and other LLMs to interact with Microsoft OneNote.
 
-> This project is based on [onenote-mcp](https://github.com/danosb/onenote-mcp), with modifications to improve authentication and usability.
+> This project is TS reimplenetatuib of  [onenote-mcp](https://github.com/danosb/onenote-mcp), with modifications to improve authentication and usability.
 
 ## What Does This Do?
 
