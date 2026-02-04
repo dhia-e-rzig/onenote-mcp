@@ -4,8 +4,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Client } from '@microsoft/microsoft-graph-client';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import dotenv from 'dotenv';
-import { InteractiveBrowserCredential } from '@azure/identity';
+import { PublicClientApplication } from '@azure/msal-node';
+import http from 'http';
 import fetch from 'node-fetch';
+import open from 'open';
 
 // Import security modules
 import { loadToken, saveToken, isTokenExpired, isValidTokenFormat } from './lib/token-store.js';
@@ -29,6 +31,16 @@ if (!process.env.AZURE_CLIENT_ID) {
 const READ_SCOPES = ['Notes.Read.All', 'User.Read'];
 const WRITE_SCOPES = ['Notes.Read.All', 'Notes.ReadWrite.All', 'User.Read'];
 
+// MSAL configuration
+const msalConfig = {
+  auth: {
+    clientId: clientId,
+    authority: 'https://login.microsoftonline.com/consumers'  // Use 'common' for both personal and work accounts
+  }
+};
+
+const pca = new PublicClientApplication(msalConfig);
+
 // Create the MCP server
 const server = new McpServer(
   { 
@@ -49,9 +61,6 @@ const server = new McpServer(
 let accessToken = null;
 let tokenExpiresAt = null;
 let currentScopes = READ_SCOPES;
-
-// Credential instance for token refresh
-let credential = null;
 
 let graphClient = null;
 
@@ -75,33 +84,86 @@ async function validateToken() {
 }
 
 /**
- * Authenticate using interactive browser flow
+ * Authenticate using interactive browser flow with local server
  * @param {string[]} scopes - OAuth scopes to request
  */
 async function authenticateInteractive(scopes = READ_SCOPES) {
   console.error('Starting interactive browser authentication...');
   
-  credential = new InteractiveBrowserCredential({
-    clientId: clientId,
-    tenantId: 'consumers',  // Use 'consumers' for personal Microsoft accounts, 'common' for both
-    redirectUri: 'http://localhost:8400'
-  });
-  
-  try {
-    const tokenResponse = await credential.getToken(scopes);
-    accessToken = tokenResponse.token;
-    tokenExpiresAt = tokenResponse.expiresOnTimestamp 
-      ? new Date(tokenResponse.expiresOnTimestamp) 
-      : new Date(Date.now() + 3600 * 1000);
-    currentScopes = scopes;
+  return new Promise((resolve, reject) => {
+    const redirectUri = 'http://localhost:8400';
     
-    await saveToken(accessToken, tokenExpiresAt);
-    console.error('Authentication successful!');
-    return true;
-  } catch (error) {
-    console.error('Authentication failed');
-    throw new Error('Authentication failed. Please try again.');
-  }
+    // Create a local server to handle the redirect
+    const server = http.createServer(async (req, res) => {
+      const url = new URL(req.url, redirectUri);
+      
+      if (url.pathname === '/' && url.searchParams.has('code')) {
+        const code = url.searchParams.get('code');
+        
+        try {
+          // Exchange code for token
+          const tokenRequest = {
+            code: code,
+            scopes: scopes,
+            redirectUri: redirectUri
+          };
+          
+          const response = await pca.acquireTokenByCode(tokenRequest);
+          
+          accessToken = response.accessToken;
+          tokenExpiresAt = response.expiresOn || new Date(Date.now() + 3600 * 1000);
+          currentScopes = scopes;
+          
+          await saveToken(accessToken, tokenExpiresAt);
+          
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end('<html><body><h1>Authentication successful!</h1><p>You can close this window.</p><script>window.close();</script></body></html>');
+          
+          server.close();
+          console.error('Authentication successful!');
+          resolve(true);
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'text/html' });
+          res.end('<html><body><h1>Authentication failed</h1><p>Please try again.</p></body></html>');
+          server.close();
+          reject(new Error('Failed to exchange code for token'));
+        }
+      } else if (url.pathname === '/' && url.searchParams.has('error')) {
+        const error = url.searchParams.get('error');
+        const errorDescription = url.searchParams.get('error_description') || 'Unknown error';
+        
+        res.writeHead(400, { 'Content-Type': 'text/html' });
+        res.end(`<html><body><h1>Authentication failed</h1><p>${errorDescription}</p></body></html>`);
+        server.close();
+        reject(new Error(errorDescription));
+      }
+    });
+    
+    server.listen(8400, async () => {
+      console.error('Waiting for authentication on http://localhost:8400...');
+      
+      // Generate auth URL and open browser
+      const authCodeUrlParameters = {
+        scopes: scopes,
+        redirectUri: redirectUri
+      };
+      
+      try {
+        const authUrl = await pca.getAuthCodeUrl(authCodeUrlParameters);
+        console.error('Opening browser for authentication...');
+        await open(authUrl);
+      } catch (error) {
+        server.close();
+        reject(new Error('Failed to generate auth URL'));
+      }
+    });
+    
+    // Timeout after 2 minutes
+    setTimeout(() => {
+      server.close();
+      reject(new Error('Authentication timed out'));
+    }, 120000);
+  });
 }
 
 /**
