@@ -13,7 +13,11 @@ import {
   handleCreatePage,
   handleUpdatePage,
   handleDeletePage,
-  handleSearchPages
+  handleSearchPages,
+  handleSearchNotebooks,
+  handleSearchSections,
+  handleSearchSectionGroups,
+  handleUniversalSearch
 } from '../handlers/index.js';
 
 /**
@@ -176,5 +180,62 @@ export function registerTools(server: McpServer): void {
       }
     },
     ({ query, notebookId, sectionId }) => handleSearchPages(query, notebookId, sectionId)
+  );
+
+  // ============================================
+  // Search Tools
+  // ============================================
+
+  server.registerTool(
+    'searchNotebooks',
+    {
+      description: 'Search for notebooks by name. Returns notebooks matching the search query, ranked by relevance.',
+      inputSchema: {
+        query: z.string().describe('The search term to find in notebook names. Required.'),
+        limit: z.number().optional().describe('Optional: Maximum number of results to return.')
+      }
+    },
+    ({ query, limit }) => handleSearchNotebooks(query, limit)
+  );
+
+  server.registerTool(
+    'searchSections',
+    {
+      description: 'Search for sections by name. Returns sections matching the search query, ranked by relevance.',
+      inputSchema: {
+        query: z.string().describe('The search term to find in section names. Required.'),
+        notebookId: z.string().optional().describe('Optional: Limit search to sections within a specific notebook.'),
+        limit: z.number().optional().describe('Optional: Maximum number of results to return.')
+      }
+    },
+    ({ query, notebookId, limit }) => handleSearchSections(query, notebookId, limit)
+  );
+
+  server.registerTool(
+    'searchSectionGroups',
+    {
+      description: 'Search for section groups by name. Returns section groups matching the search query, ranked by relevance.',
+      inputSchema: {
+        query: z.string().describe('The search term to find in section group names. Required.'),
+        notebookId: z.string().optional().describe('Optional: Limit search to section groups within a specific notebook.'),
+        limit: z.number().optional().describe('Optional: Maximum number of results to return.')
+      }
+    },
+    ({ query, notebookId, limit }) => handleSearchSectionGroups(query, notebookId, limit)
+  );
+
+  server.registerTool(
+    'search',
+    {
+      description: 'Universal search across all OneNote entities (notebooks, sections, section groups, and pages). Returns all matching items ranked by relevance. Use this when you want to find something but are unsure of its type.',
+      inputSchema: {
+        query: z.string().describe('The search term to find across all entities. Required.'),
+        entityTypes: z.array(z.enum(['notebooks', 'sections', 'sectionGroups', 'pages'])).optional()
+          .describe('Optional: Array of entity types to search. Defaults to all types. Options: "notebooks", "sections", "sectionGroups", "pages".'),
+        notebookId: z.string().optional().describe('Optional: Limit search to within a specific notebook.'),
+        limit: z.number().optional().describe('Optional: Maximum number of results to return.')
+      }
+    },
+    ({ query, entityTypes, notebookId, limit }) => handleUniversalSearch(query, entityTypes, notebookId, limit)
   );
 }

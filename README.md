@@ -151,24 +151,73 @@ You only need to re-authenticate if:
 
 ## Available Tools
 
-The following tools are available for AI assistants:
+The following tools are available for AI assistants, organized by operation type:
+
+### 📖 Read Operations
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
 | `listNotebooks` | List all your OneNote notebooks | - |
 | `getNotebook` | Get details of a specific notebook | `notebookId` (optional) |
-| `createNotebook` | Create a new notebook | `displayName` |
 | `listSections` | List sections in a notebook | `notebookId` (optional) |
 | `getSection` | Get details of a specific section | `sectionId` |
-| `createSection` | Create a new section | `notebookId`, `displayName` |
 | `listSectionGroups` | List section groups in a notebook | `notebookId` (optional) |
 | `listPages` | List pages in a section | `sectionId` (optional) |
-| `getPage` | Get page metadata | `pageId` or `title` |
-| `getPageContent` | Get full page content (HTML) | `pageId` |
-| `createPage` | Create a new page | `sectionId`, `title`, `content` (optional) |
+| `getPage` | Get page content by ID or title | `pageId` or `title` |
+
+### ✏️ Create Operations
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `createNotebook` | Create a new notebook | `displayName` |
+| `createSection` | Create a new section in a notebook | `notebookId`, `displayName` |
+| `createPage` | Create a new page in a section | `sectionId`, `title` (optional), `content` (optional) |
+
+### 🔄 Update Operations
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
 | `updatePage` | Append content to a page | `pageId`, `content`, `target` (optional) |
+
+### 🗑️ Delete Operations
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
 | `deletePage` | Delete a page | `pageId` |
-| `searchPages` | Search for pages by title | `query`, `notebookId` (optional), `sectionId` (optional) |
+
+### 🔍 Search Operations
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `search` | Universal search across all entity types | `query`, `entityTypes` (optional), `notebookId` (optional), `limit` (optional) |
+| `searchNotebooks` | Search notebooks by name | `query`, `limit` (optional) |
+| `searchSections` | Search sections by name | `query`, `notebookId` (optional), `limit` (optional) |
+| `searchSectionGroups` | Search section groups by name | `query`, `notebookId` (optional), `limit` (optional) |
+| `searchPages` | Search pages by title | `query`, `notebookId` (optional), `sectionId` (optional) |
+
+#### Search Relevance Scoring
+
+All search tools rank results by relevance:
+- **100 points** - Exact match
+- **80 points** - Name starts with search term
+- **60 points** - Search term appears as a whole word
+- **40 points** - Search term appears anywhere in the name
+
+### 📋 Tool Lists by Permission Level
+
+Use these lists to quickly configure which tools to enable based on access requirements.
+
+#### Read Only (Read + Search)
+
+```
+"listNotebooks", "getNotebook", "listSections", "getSection", "listSectionGroups", "listPages", "getPage", "search", "searchNotebooks", "searchSections", "searchSectionGroups", "searchPages"
+```
+
+#### Read/Write (All Operations)
+
+```
+"listNotebooks", "getNotebook", "listSections", "getSection", "listSectionGroups", "listPages", "getPage", "createNotebook", "createSection", "createPage", "updatePage", "deletePage", "search", "searchNotebooks", "searchSections", "searchSectionGroups", "searchPages"
+```
 
 ## Example Interactions
 
@@ -204,7 +253,8 @@ onenote-mcp/
 │   │   ├── response.ts       # Response helpers & types
 │   │   ├── notebooks.ts      # Notebook operations
 │   │   ├── sections.ts       # Section operations
-│   │   └── pages.ts          # Page operations
+│   │   ├── pages.ts          # Page operations
+│   │   └── search.ts         # Search operations
 │   ├── tools/
 │   │   └── register.ts       # MCP tool registration
 │   ├── lib/
@@ -218,6 +268,7 @@ onenote-mcp/
 │       ├── notebooks.test.ts     # Notebook handler tests
 │       ├── sections.test.ts      # Section handler tests
 │       ├── pages.test.ts         # Page handler tests
+│       ├── search.test.ts        # Search handler tests
 │       ├── token-store.test.ts   # Token store tests
 │       └── integration.test.ts   # API integration tests
 ├── dist/                     # Compiled JavaScript (generated)
