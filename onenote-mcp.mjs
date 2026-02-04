@@ -13,12 +13,10 @@ import open from 'open';
 import { loadToken, saveToken, loadRefreshToken, saveRefreshToken, saveAccountInfo, isTokenExpired, isValidTokenFormat } from './lib/token-store.js';
 import { validateSearchTerm, sanitizeHtmlContent, createSafeErrorMessage } from './lib/validation.js';
 import { rateLimiter } from './lib/rate-limiter.js';
+import { clientId, authority, msalConfig } from './lib/config.js';
 
 // Load environment variables
 dotenv.config();
-
-// Client ID - Should be set via environment variable for production
-const clientId = process.env.AZURE_CLIENT_ID || '813d941f-92ac-4ac0-94a2-1e89b720e15b';
 
 // Warn if using default client ID
 if (!process.env.AZURE_CLIENT_ID) {
@@ -30,14 +28,6 @@ if (!process.env.AZURE_CLIENT_ID) {
 // Include offline_access for refresh tokens
 const READ_SCOPES = ['Notes.Read.All', 'User.Read', 'offline_access'];
 const WRITE_SCOPES = ['Notes.Read.All', 'Notes.ReadWrite.All', 'User.Read', 'offline_access'];
-
-// MSAL configuration
-const msalConfig = {
-  auth: {
-    clientId: clientId,
-    authority: 'https://login.microsoftonline.com/consumers'  // Use 'common' for both personal and work accounts
-  }
-};
 
 const pca = new PublicClientApplication(msalConfig);
 const cryptoProvider = new CryptoProvider();

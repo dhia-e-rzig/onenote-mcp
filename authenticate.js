@@ -1,22 +1,7 @@
 import { PublicClientApplication, CryptoProvider } from '@azure/msal-node';
 import { saveToken, saveRefreshToken, saveAccountInfo } from './lib/token-store.js';
+import { clientId, scopes, redirectUri, msalConfig } from './lib/config.js';
 import http from 'http';
-import open from 'open';
-
-// Client ID - use environment variable for production
-const clientId = '813d941f-92ac-4ac0-94a2-1e89b720e15b';
-
-// OneNote scopes - Notes.ReadWrite includes create permissions
-const scopes = ['Notes.ReadWrite', 'User.Read', 'offline_access'];
-const redirectUri = 'http://localhost:8400';
-
-// MSAL configuration
-const msalConfig = {
-  auth: {
-    clientId: clientId,
-    authority: 'https://login.microsoftonline.com/consumers'
-  }
-};
 
 const pca = new PublicClientApplication(msalConfig);
 const cryptoProvider = new CryptoProvider();
