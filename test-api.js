@@ -19,14 +19,18 @@ let skipped = 0;
 // Test notebook tracking for cleanup
 let testNotebookId = null;
 let testSectionId = null;
+let testSectionId2 = null; // Second section for testing
 let testPageId = null;
+let testPageId2 = null; // Second page for update/delete tests
 let testNotebookLink = null;
 let graphClient = null;
 
 // Use a fixed name so we can reuse existing test notebooks
 const TEST_NOTEBOOK_NAME = '_MCP_Test_Notebook';
 const TEST_SECTION_NAME = 'Test Section';
+const TEST_SECTION_NAME_2 = 'Test Section 2';
 const TEST_PAGE_TITLE = 'Test Page';
+const TEST_PAGE_TITLE_2 = 'Update Delete Test Page';
 const TEST_PAGE_CONTENT = `
 <!DOCTYPE html>
 <html>
@@ -93,6 +97,20 @@ async function setupTestNotebook() {
             await graphClient.api(`/me/onenote/pages/${page.id}`).delete();
           } catch (e) { /* ignore */ }
         }
+        
+        // Check for second test section
+        const existingSection2 = sections.value?.find(s => s.displayName === TEST_SECTION_NAME_2);
+        if (existingSection2) {
+          testSectionId2 = existingSection2.id;
+          console.log('   ✓ Found existing test section 2');
+          // Clean pages in section 2
+          const pages2 = await graphClient.api(`/me/onenote/sections/${testSectionId2}/pages`).get();
+          for (const page of pages2.value || []) {
+            try {
+              await graphClient.api(`/me/onenote/pages/${page.id}`).delete();
+            } catch (e) { /* ignore */ }
+          }
+        }
       } else {
         // Create test section
         console.log(`   Creating section: "${TEST_SECTION_NAME}"...`);
@@ -130,6 +148,16 @@ async function setupTestNotebook() {
     testPageId = page.id;
     console.log(`   ✓ Page created`);
     
+    // Create second test page for update/delete tests
+    console.log(`   Creating page: "${TEST_PAGE_TITLE_2}"...`);
+    const page2Content = TEST_PAGE_CONTENT.replace(TEST_PAGE_TITLE, TEST_PAGE_TITLE_2);
+    const page2 = await graphClient
+      .api(`/me/onenote/sections/${testSectionId}/pages`)
+      .header('Content-Type', 'application/xhtml+xml')
+      .post(page2Content);
+    testPageId2 = page2.id;
+    console.log(`   ✓ Second test page created`);
+    
     // Wait a moment for OneNote to sync
     console.log('   Waiting for sync...');
     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -165,6 +193,16 @@ async function cleanupTestNotebook() {
         console.log('   ✓ Page deleted');
       } catch (e) {
         console.log(`   ⚠ Could not delete page: ${e.message}`);
+      }
+    }
+    
+    if (testPageId2) {
+      console.log('   Deleting test page 2...');
+      try {
+        await graphClient.api(`/me/onenote/pages/${testPageId2}`).delete();
+        console.log('   ✓ Page 2 deleted');
+      } catch (e) {
+        console.log(`   ⚠ Could not delete page 2: ${e.message}`);
       }
     }
     
@@ -342,6 +380,125 @@ async function runTests() {
           console.log(`      Notebook: "${notebook?.displayName}"`);
         } catch (error) {
           test('getNotebook API call', false);
+          console.log(`      Error: ${error.message}`);
+        }
+        
+        // Test: getSection (get specific section details)
+        console.log('\n   📑 getSection:');
+        try {
+          const section = await graphClient.api(`/me/onenote/sections/${testSectionId}`).get();
+          test('getSection returns data', section !== null);
+          test('getSection has correct id', section?.id === testSectionId);
+          test('getSection has displayName', !!section?.displayName);
+          test('getSection has parentNotebook', !!section?.parentNotebook);
+          console.log(`      Section: "${section?.displayName}" in "${section?.parentNotebook?.displayName}"`);
+        } catch (error) {
+          test('getSection API call', false);
+          console.log(`      Error: ${error.message}`);
+        }
+        
+        // Test: listSectionGroups (may be empty but should work)
+        console.log('\n   📁 listSectionGroups:');
+        try {
+          const sectionGroups = await graphClient.api(`/me/onenote/notebooks/${testNotebookId}/sectionGroups`).get();
+          test('listSectionGroups returns data', sectionGroups !== null);
+          test('listSectionGroups has value array', Array.isArray(sectionGroups.value));
+          console.log(`      Found ${sectionGroups.value?.length || 0} section group(s)`);
+        } catch (error) {
+          test('listSectionGroups API call', false);
+          console.log(`      Error: ${error.message}`);
+        }
+        
+        // Test: createSection (create a new section)
+        console.log('\n   ➕ createSection:');
+        try {
+          if (!testSectionId2) {
+            const newSection = await graphClient.api(`/me/onenote/notebooks/${testNotebookId}/sections`).post({
+              displayName: TEST_SECTION_NAME_2
+            });
+            testSectionId2 = newSection.id;
+            test('createSection returns data', newSection !== null);
+            test('createSection has id', !!newSection?.id);
+            test('createSection has correct name', newSection?.displayName === TEST_SECTION_NAME_2);
+            console.log(`      Created: "${newSection?.displayName}"`);
+          } else {
+            test('createSection (reusing existing)', true);
+            console.log(`      Reusing existing section: "${TEST_SECTION_NAME_2}"`);
+          }
+        } catch (error) {
+          test('createSection API call', false);
+          console.log(`      Error: ${error.message}`);
+        }
+        
+        // Test: updatePage (append content to a page)
+        console.log('\n   ✏️  updatePage:');
+        try {
+          const updateContent = [
+            {
+              target: 'body',
+              action: 'append',
+              content: '<p>Updated content added at ' + new Date().toISOString() + '</p>'
+            }
+          ];
+          
+          await graphClient
+            .api(`/me/onenote/pages/${testPageId2}/content`)
+            .header('Content-Type', 'application/json')
+            .patch(updateContent);
+          
+          test('updatePage PATCH succeeds', true);
+          console.log(`      Appended content to page ${testPageId2}`);
+          
+          // Wait for sync
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (error) {
+          test('updatePage API call', false);
+          console.log(`      Error: ${error.message}`);
+        }
+        
+        // Test: deletePage (delete the second test page)
+        console.log('\n   🗑️  deletePage:');
+        try {
+          await graphClient.api(`/me/onenote/pages/${testPageId2}`).delete();
+          test('deletePage DELETE succeeds', true);
+          console.log(`      Deleted page ${testPageId2}`);
+          testPageId2 = null; // Clear so cleanup doesn't try to delete again
+        } catch (error) {
+          test('deletePage API call', false);
+          console.log(`      Error: ${error.message}`);
+        }
+        
+        // Test: Filtering - listSections with specific notebook
+        console.log('\n   🎯 Filtering Tests:');
+        try {
+          // List sections for specific notebook
+          const filteredSections = await graphClient.api(`/me/onenote/notebooks/${testNotebookId}/sections`).get();
+          test('listSections with notebookId filter works', Array.isArray(filteredSections.value));
+          
+          // Verify all returned sections belong to our notebook
+          const allBelongToNotebook = filteredSections.value?.every(s => 
+            s.parentNotebook?.id === testNotebookId
+          ) ?? false;
+          test('All sections belong to filtered notebook', allBelongToNotebook);
+          console.log(`      ${filteredSections.value?.length || 0} sections in notebook`);
+        } catch (error) {
+          test('Filtering - listSections', false);
+          console.log(`      Error: ${error.message}`);
+        }
+        
+        try {
+          // List pages for specific section
+          const filteredPages = await graphClient.api(`/me/onenote/sections/${testSectionId}/pages`).get();
+          test('listPages with sectionId filter works', Array.isArray(filteredPages.value));
+          
+          // Verify all returned pages belong to our section
+          const allBelongToSection = filteredPages.value?.every(p => 
+            p.parentSection?.id === testSectionId
+          ) ?? false;
+          test('All pages belong to filtered section', allBelongToSection);
+          console.log(`      ${filteredPages.value?.length || 0} pages in section`);
+        } catch (error) {
+          test('Filtering - listPages', false);
           console.log(`      Error: ${error.message}`);
         }
         

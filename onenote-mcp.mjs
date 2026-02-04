@@ -291,10 +291,27 @@ server.tool(
 // Tool for getting notebook details
 server.tool(
   "getNotebook",
-  "Get details of a specific notebook",
-  async () => {
+  "Get details of a specific notebook by ID",
+  {
+    notebookId: {
+      type: "string",
+      description: "The ID of the notebook to get. If not provided, returns the first notebook."
+    }
+  },
+  async (params) => {
     try {
       await ensureGraphClient(false);
+      
+      if (params.notebookId) {
+        const response = await rateLimiter.execute(() => 
+          graphClient.api(`/me/onenote/notebooks/${params.notebookId}`).get()
+        );
+        return { 
+          content: [{ type: "text", text: JSON.stringify(response) }]
+        };
+      }
+      
+      // Fallback: return first notebook
       const response = await rateLimiter.execute(() => 
         graphClient.api("/me/onenote/notebooks").get()
       );
@@ -320,13 +337,30 @@ server.tool(
 // Tool for listing sections in a notebook
 server.tool(
   "listSections",
-  "List all sections in a notebook",
-  async () => {
+  "List all sections. Provide a notebookId to list sections from a specific notebook, or omit to list all sections.",
+  {
+    notebookId: {
+      type: "string",
+      description: "The ID of the notebook to list sections from. If not provided, lists all sections across all notebooks."
+    }
+  },
+  async (params) => {
     try {
       await ensureGraphClient(false);
-      const response = await rateLimiter.execute(() => 
-        graphClient.api("/me/onenote/sections").get()
-      );
+      
+      let response;
+      if (params.notebookId) {
+        // List sections from specific notebook
+        response = await rateLimiter.execute(() => 
+          graphClient.api(`/me/onenote/notebooks/${params.notebookId}/sections`).get()
+        );
+      } else {
+        // List all sections
+        response = await rateLimiter.execute(() => 
+          graphClient.api("/me/onenote/sections").get()
+        );
+      }
+      
       return { 
         content: [{ type: "text", text: JSON.stringify(response.value) }]
       };
@@ -339,31 +373,137 @@ server.tool(
   }
 );
 
-// Tool for listing pages in a section
+// Tool for getting section details
 server.tool(
-  "listPages",
-  "List all pages in a section",
-  async () => {
+  "getSection",
+  "Get details of a specific section by ID",
+  {
+    sectionId: {
+      type: "string",
+      description: "The ID of the section to get. Required."
+    }
+  },
+  async (params) => {
     try {
       await ensureGraphClient(false);
-      const sectionsResponse = await rateLimiter.execute(() => 
-        graphClient.api("/me/onenote/sections").get()
-      );
       
-      if (!sectionsResponse.value || sectionsResponse.value.length === 0) {
-        return { 
-          content: [{ type: "text", text: "[]" }]
+      if (!params.sectionId) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: 'sectionId is required' }) }]
         };
       }
       
-      const sectionId = sectionsResponse.value[0].id;
       const response = await rateLimiter.execute(() => 
-        graphClient.api(`/me/onenote/sections/${sectionId}/pages`).get()
+        graphClient.api(`/me/onenote/sections/${params.sectionId}`).get()
       );
+      
+      return { 
+        content: [{ type: "text", text: JSON.stringify(response) }]
+      };
+    } catch (error) {
+      const safeMessage = createSafeErrorMessage('Get section', error);
+      return {
+        content: [{ type: "text", text: JSON.stringify({ error: safeMessage }) }]
+      };
+    }
+  }
+);
+
+// Tool for listing section groups
+server.tool(
+  "listSectionGroups",
+  "List all section groups. Provide a notebookId to list section groups from a specific notebook.",
+  {
+    notebookId: {
+      type: "string",
+      description: "The ID of the notebook to list section groups from. If not provided, lists all section groups."
+    }
+  },
+  async (params) => {
+    try {
+      await ensureGraphClient(false);
+      
+      let response;
+      if (params.notebookId) {
+        response = await rateLimiter.execute(() => 
+          graphClient.api(`/me/onenote/notebooks/${params.notebookId}/sectionGroups`).get()
+        );
+      } else {
+        response = await rateLimiter.execute(() => 
+          graphClient.api("/me/onenote/sectionGroups").get()
+        );
+      }
       
       return { 
         content: [{ type: "text", text: JSON.stringify(response.value) }]
       };
+    } catch (error) {
+      const safeMessage = createSafeErrorMessage('List section groups', error);
+      return {
+        content: [{ type: "text", text: JSON.stringify({ error: safeMessage }) }]
+      };
+    }
+  }
+);
+
+// Tool for listing pages in a section
+server.tool(
+  "listPages",
+  "List all pages in a section. Provide a sectionId to list pages from a specific section, or omit to list pages from all sections.",
+  {
+    sectionId: {
+      type: "string",
+      description: "The ID of the section to list pages from. If not provided, lists pages from all sections."
+    }
+  },
+  async (params) => {
+    try {
+      await ensureGraphClient(false);
+      
+      if (params.sectionId) {
+        // List pages from specific section
+        const response = await rateLimiter.execute(() => 
+          graphClient.api(`/me/onenote/sections/${params.sectionId}/pages`).get()
+        );
+        return { 
+          content: [{ type: "text", text: JSON.stringify(response.value) }]
+        };
+      } else {
+        // List pages from all sections (get sections first, then pages from each)
+        const sectionsResponse = await rateLimiter.execute(() => 
+          graphClient.api("/me/onenote/sections").get()
+        );
+        
+        if (!sectionsResponse.value || sectionsResponse.value.length === 0) {
+          return { 
+            content: [{ type: "text", text: "[]" }]
+          };
+        }
+        
+        // Collect pages from all sections
+        const allPages = [];
+        for (const section of sectionsResponse.value) {
+          try {
+            const pagesResponse = await rateLimiter.execute(() => 
+              graphClient.api(`/me/onenote/sections/${section.id}/pages`).get()
+            );
+            if (pagesResponse.value) {
+              // Add section info to each page for context
+              for (const page of pagesResponse.value) {
+                page.sectionName = section.displayName;
+                page.sectionId = section.id;
+                allPages.push(page);
+              }
+            }
+          } catch (e) {
+            // Skip sections that fail (might have permission issues)
+          }
+        }
+        
+        return { 
+          content: [{ type: "text", text: JSON.stringify(allPages) }]
+        };
+      }
     } catch (error) {
       const safeMessage = createSafeErrorMessage('List pages', error);
       return {
@@ -376,54 +516,60 @@ server.tool(
 // Tool for getting the content of a page
 server.tool(
   "getPage",
-  "Get the content of a page",
+  "Get the content of a page by ID or title",
+  {
+    pageId: {
+      type: "string",
+      description: "The ID of the page to retrieve. Takes precedence over title search."
+    },
+    title: {
+      type: "string",
+      description: "Search for a page by title (partial match). Used if pageId is not provided."
+    }
+  },
   async (params) => {
     try {
       await ensureGraphClient(false);
       
-      // Validate input
-      const inputValue = params.random_string || '';
-      const validation = validateSearchTerm(inputValue);
-      if (!validation.valid) {
-        return {
-          content: [{ type: "text", text: JSON.stringify({ error: validation.error }) }]
-        };
-      }
+      let targetPage = null;
       
-      const pagesResponse = await rateLimiter.execute(() => 
-        graphClient.api('/me/onenote/pages').get()
-      );
-      
-      if (!pagesResponse.value || pagesResponse.value.length === 0) {
-        return {
-          content: [{ type: "text", text: JSON.stringify({ error: 'No pages found' }) }]
-        };
-      }
-      
-      let targetPage;
-      const searchValue = validation.value;
-      
-      if (searchValue.length > 0) {
-        // Look for exact ID match first
-        targetPage = pagesResponse.value.find(p => p.id === searchValue);
+      if (params.pageId) {
+        // Direct page ID lookup
+        try {
+          const pageInfo = await rateLimiter.execute(() => 
+            graphClient.api(`/me/onenote/pages/${params.pageId}`).get()
+          );
+          targetPage = pageInfo;
+        } catch (e) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ error: `Page not found with ID: ${params.pageId}` }) }]
+          };
+        }
+      } else if (params.title) {
+        // Search by title
+        const pagesResponse = await rateLimiter.execute(() => 
+          graphClient.api('/me/onenote/pages').get()
+        );
         
-        // If no exact match, try matching by title
-        if (!targetPage) {
-          const searchLower = searchValue.toLowerCase();
+        if (pagesResponse.value && pagesResponse.value.length > 0) {
+          const searchLower = params.title.toLowerCase();
           targetPage = pagesResponse.value.find(p => 
             p.title && p.title.toLowerCase().includes(searchLower)
           );
         }
+        
+        if (!targetPage) {
+          return {
+            content: [{ type: "text", text: JSON.stringify({ error: `No page found matching title: ${params.title}` }) }]
+          };
+        }
       } else {
-        targetPage = pagesResponse.value[0];
-      }
-      
-      if (!targetPage) {
         return {
-          content: [{ type: "text", text: JSON.stringify({ error: 'Page not found' }) }]
+          content: [{ type: "text", text: JSON.stringify({ error: 'Please provide either pageId or title parameter' }) }]
         };
       }
       
+      // Get page content
       const url = `https://graph.microsoft.com/v1.0/me/onenote/pages/${targetPage.id}/content`;
       
       const content = await rateLimiter.execute(async () => {
@@ -437,7 +583,17 @@ server.tool(
       });
       
       return {
-        content: [{ type: "text", text: content }]
+        content: [{ 
+          type: "text", 
+          text: JSON.stringify({
+            id: targetPage.id,
+            title: targetPage.title,
+            createdDateTime: targetPage.createdDateTime,
+            lastModifiedDateTime: targetPage.lastModifiedDateTime,
+            contentUrl: targetPage.contentUrl,
+            content: content
+          })
+        }]
       };
     } catch (error) {
       const safeMessage = createSafeErrorMessage('Get page', error);
@@ -451,46 +607,63 @@ server.tool(
 // Tool for creating a new page in a section
 server.tool(
   "createPage",
-  "Create a new page in a section",
-  async () => {
+  "Create a new page in a specific section",
+  {
+    sectionId: {
+      type: "string",
+      description: "The ID of the section to create the page in. Required."
+    },
+    title: {
+      type: "string",
+      description: "The title of the new page. Defaults to 'New Page' if not provided."
+    },
+    content: {
+      type: "string",
+      description: "The HTML content for the page body. Can include basic HTML tags like <p>, <h1>, <ul>, etc."
+    }
+  },
+  async (params) => {
     try {
       // Require write permissions for this operation
       await ensureGraphClient(true);
       
-      const sectionsResponse = await rateLimiter.execute(() => 
-        graphClient.api("/me/onenote/sections").get()
-      );
-      
-      if (!sectionsResponse.value || sectionsResponse.value.length === 0) {
+      if (!params.sectionId) {
         return {
-          content: [{ type: "text", text: JSON.stringify({ error: 'No sections found' }) }]
+          content: [{ type: "text", text: JSON.stringify({ error: 'sectionId is required. Use listSections to find section IDs.' }) }]
         };
       }
       
-      const sectionId = sectionsResponse.value[0].id;
+      const pageTitle = params.title || 'New Page';
+      const bodyContent = params.content || '<p>This is a new page created via the OneNote MCP.</p>';
       
       // Sanitize HTML content
       const simpleHtml = sanitizeHtmlContent(`
         <!DOCTYPE html>
         <html>
           <head>
-            <title>New Page</title>
+            <title>${pageTitle}</title>
           </head>
           <body>
-            <p>This is a new page created via the Microsoft Graph API</p>
+            ${bodyContent}
           </body>
         </html>
       `);
       
       const response = await rateLimiter.execute(() => 
         graphClient
-          .api(`/me/onenote/sections/${sectionId}/pages`)
+          .api(`/me/onenote/sections/${params.sectionId}/pages`)
           .header("Content-Type", "application/xhtml+xml")
           .post(simpleHtml)
       );
       
       return { 
-        content: [{ type: "text", text: JSON.stringify({ success: true, id: response.id }) }]
+        content: [{ type: "text", text: JSON.stringify({ 
+          success: true, 
+          id: response.id,
+          title: response.title,
+          createdDateTime: response.createdDateTime,
+          self: response.self
+        }) }]
       };
     } catch (error) {
       const safeMessage = createSafeErrorMessage('Create page', error);
@@ -504,46 +677,275 @@ server.tool(
 // Tool for searching pages
 server.tool(
   "searchPages",
-  "Search for pages across notebooks",
+  "Search for pages by title across all notebooks",
+  {
+    query: {
+      type: "string",
+      description: "The search term to find in page titles. Required."
+    },
+    notebookId: {
+      type: "string",
+      description: "Optional: Limit search to pages within a specific notebook."
+    },
+    sectionId: {
+      type: "string",
+      description: "Optional: Limit search to pages within a specific section."
+    }
+  },
   async (params) => {
     try {
       await ensureGraphClient(false);
       
-      // Validate search input
-      const validation = validateSearchTerm(params.random_string);
-      if (!validation.valid) {
+      if (!params.query) {
         return {
-          content: [{ type: "text", text: JSON.stringify({ error: validation.error }) }]
+          content: [{ type: "text", text: JSON.stringify({ error: 'query parameter is required' }) }]
+        };
+      }
+      
+      let pages = [];
+      
+      if (params.sectionId) {
+        // Search within specific section
+        const response = await rateLimiter.execute(() => 
+          graphClient.api(`/me/onenote/sections/${params.sectionId}/pages`).get()
+        );
+        pages = response.value || [];
+      } else if (params.notebookId) {
+        // Search within specific notebook (get all sections first)
+        const sectionsResponse = await rateLimiter.execute(() => 
+          graphClient.api(`/me/onenote/notebooks/${params.notebookId}/sections`).get()
+        );
+        
+        for (const section of sectionsResponse.value || []) {
+          try {
+            const pagesResponse = await rateLimiter.execute(() => 
+              graphClient.api(`/me/onenote/sections/${section.id}/pages`).get()
+            );
+            if (pagesResponse.value) {
+              for (const page of pagesResponse.value) {
+                page.sectionName = section.displayName;
+                page.sectionId = section.id;
+                pages.push(page);
+              }
+            }
+          } catch (e) { /* skip */ }
+        }
+      } else {
+        // Search all pages
+        const response = await rateLimiter.execute(() => 
+          graphClient.api("/me/onenote/pages").get()
+        );
+        pages = response.value || [];
+      }
+      
+      // Filter by search term
+      const searchTerm = params.query.toLowerCase();
+      const filteredPages = pages.filter(page => 
+        page.title && page.title.toLowerCase().includes(searchTerm)
+      );
+      
+      return { 
+        content: [{ type: "text", text: JSON.stringify(filteredPages) }]
+      };
+    } catch (error) {
+      const safeMessage = createSafeErrorMessage('Search pages', error);
+      return {
+        content: [{ type: "text", text: JSON.stringify({ error: safeMessage }) }]
+      };
+    }
+  }
+);
+
+// Tool for deleting a page
+server.tool(
+  "deletePage",
+  "Delete a page by ID",
+  {
+    pageId: {
+      type: "string",
+      description: "The ID of the page to delete. Required."
+    }
+  },
+  async (params) => {
+    try {
+      await ensureGraphClient(true); // Require write permissions
+      
+      if (!params.pageId) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: 'pageId is required' }) }]
+        };
+      }
+      
+      await rateLimiter.execute(() => 
+        graphClient.api(`/me/onenote/pages/${params.pageId}`).delete()
+      );
+      
+      return { 
+        content: [{ type: "text", text: JSON.stringify({ success: true, message: 'Page deleted successfully' }) }]
+      };
+    } catch (error) {
+      const safeMessage = createSafeErrorMessage('Delete page', error);
+      return {
+        content: [{ type: "text", text: JSON.stringify({ error: safeMessage }) }]
+      };
+    }
+  }
+);
+
+// Tool for updating/appending content to a page
+server.tool(
+  "updatePage",
+  "Update a page by appending content to it",
+  {
+    pageId: {
+      type: "string",
+      description: "The ID of the page to update. Required."
+    },
+    content: {
+      type: "string", 
+      description: "The HTML content to append to the page. Required."
+    },
+    target: {
+      type: "string",
+      description: "Where to insert the content: 'body' (default) appends to page body, or specify an element ID."
+    }
+  },
+  async (params) => {
+    try {
+      await ensureGraphClient(true); // Require write permissions
+      
+      if (!params.pageId) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: 'pageId is required' }) }]
+        };
+      }
+      
+      if (!params.content) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: 'content is required' }) }]
+        };
+      }
+      
+      const target = params.target || 'body';
+      
+      // OneNote PATCH requires a specific format
+      const patchContent = [
+        {
+          target: target,
+          action: 'append',
+          content: sanitizeHtmlContent(params.content)
+        }
+      ];
+      
+      await rateLimiter.execute(() => 
+        graphClient
+          .api(`/me/onenote/pages/${params.pageId}/content`)
+          .header('Content-Type', 'application/json')
+          .patch(patchContent)
+      );
+      
+      return { 
+        content: [{ type: "text", text: JSON.stringify({ success: true, message: 'Page updated successfully' }) }]
+      };
+    } catch (error) {
+      const safeMessage = createSafeErrorMessage('Update page', error);
+      return {
+        content: [{ type: "text", text: JSON.stringify({ error: safeMessage }) }]
+      };
+    }
+  }
+);
+
+// Tool for creating a new section in a notebook
+server.tool(
+  "createSection",
+  "Create a new section in a notebook",
+  {
+    notebookId: {
+      type: "string",
+      description: "The ID of the notebook to create the section in. Required."
+    },
+    displayName: {
+      type: "string",
+      description: "The name of the new section. Required."
+    }
+  },
+  async (params) => {
+    try {
+      await ensureGraphClient(true); // Require write permissions
+      
+      if (!params.notebookId) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: 'notebookId is required. Use listNotebooks to find notebook IDs.' }) }]
+        };
+      }
+      
+      if (!params.displayName) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: 'displayName is required' }) }]
         };
       }
       
       const response = await rateLimiter.execute(() => 
-        graphClient.api("/me/onenote/pages").get()
+        graphClient.api(`/me/onenote/notebooks/${params.notebookId}/sections`).post({
+          displayName: params.displayName
+        })
       );
       
-      if (!response.value) {
-        return { 
-          content: [{ type: "text", text: "[]" }]
-        };
-      }
-      
-      // Filter by search term if provided
-      if (validation.value.length > 0) {
-        const searchTerm = validation.value.toLowerCase();
-        const filteredPages = response.value.filter(page => 
-          page.title && page.title.toLowerCase().includes(searchTerm)
-        );
-        
-        return { 
-          content: [{ type: "text", text: JSON.stringify(filteredPages) }]
-        };
-      }
-      
       return { 
-        content: [{ type: "text", text: JSON.stringify(response.value) }]
+        content: [{ type: "text", text: JSON.stringify({ 
+          success: true, 
+          id: response.id,
+          displayName: response.displayName,
+          self: response.self
+        }) }]
       };
     } catch (error) {
-      const safeMessage = createSafeErrorMessage('Search pages', error);
+      const safeMessage = createSafeErrorMessage('Create section', error);
+      return {
+        content: [{ type: "text", text: JSON.stringify({ error: safeMessage }) }]
+      };
+    }
+  }
+);
+
+// Tool for creating a new notebook
+server.tool(
+  "createNotebook",
+  "Create a new notebook",
+  {
+    displayName: {
+      type: "string",
+      description: "The name of the new notebook. Required."
+    }
+  },
+  async (params) => {
+    try {
+      await ensureGraphClient(true); // Require write permissions
+      
+      if (!params.displayName) {
+        return {
+          content: [{ type: "text", text: JSON.stringify({ error: 'displayName is required' }) }]
+        };
+      }
+      
+      const response = await rateLimiter.execute(() => 
+        graphClient.api('/me/onenote/notebooks').post({
+          displayName: params.displayName
+        })
+      );
+      
+      return { 
+        content: [{ type: "text", text: JSON.stringify({ 
+          success: true, 
+          id: response.id,
+          displayName: response.displayName,
+          self: response.self,
+          links: response.links
+        }) }]
+      };
+    } catch (error) {
+      const safeMessage = createSafeErrorMessage('Create notebook', error);
       return {
         content: [{ type: "text", text: JSON.stringify({ error: safeMessage }) }]
       };
