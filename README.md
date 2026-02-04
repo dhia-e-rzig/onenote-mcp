@@ -17,6 +17,7 @@ All of this happens directly through the AI interface without you having to swit
 
 ## Features
 
+- **TypeScript** - Fully typed codebase with strict type checking
 - **Persistent authentication** - Authenticate once, stay logged in across sessions using refresh tokens
 - **Secure token storage** - Tokens stored in OS credential manager (Windows Credential Manager, macOS Keychain, Linux Secret Service)
 - **Automatic token refresh** - Silently refreshes expired tokens without user interaction
@@ -46,10 +47,16 @@ cd onenote-mcp
 npm install
 ```
 
-### Step 3: Authenticate (One-Time Setup)
+### Step 3: Build the Project
 
 ```bash
-node authenticate.js
+npm run build
+```
+
+### Step 4: Authenticate (One-Time Setup)
+
+```bash
+npm run auth
 ```
 
 A browser window will open for Microsoft login. After signing in, your credentials are securely stored and will persist across sessions.
@@ -69,7 +76,7 @@ That's it! The server will automatically use your stored credentials.
   "mcpServers": {
     "onenote": {
       "command": "node",
-      "args": ["/absolute/path/to/onenote-mcp.mjs"]
+      "args": ["/absolute/path/to/onenote-mcp/dist/index.js"]
     }
   }
 }
@@ -90,7 +97,7 @@ That's it! The server will automatically use your stored credentials.
   "mcpServers": {
     "onenote": {
       "command": "node",
-      "args": ["/absolute/path/to/onenote-mcp.mjs"]
+      "args": ["/absolute/path/to/onenote-mcp/dist/index.js"]
     }
   }
 }
@@ -108,82 +115,16 @@ Add to your VS Code `settings.json`:
     "servers": {
       "onenote": {
         "command": "node",
-        "args": ["/absolute/path/to/onenote-mcp.mjs"]
+        "args": ["/absolute/path/to/onenote-mcp/dist/index.js"]
       }
     }
   }
 }
 ```
 
-### GitHub Copilot CLI
-
-Add to your `~/.config/github-copilot/config.json` (Linux/macOS) or `%APPDATA%\github-copilot\config.json` (Windows):
-
-```json
-{
-  "mcpServers": {
-    "onenote": {
-      "command": "node",
-      "args": ["/absolute/path/to/onenote-mcp.mjs"]
-    }
-  }
-}
-```
-
-Then use with:
-```bash
-gh copilot chat --mcp onenote "List my OneNote notebooks"
-```
-
-### GitHub Copilot SDK (Node.js)
-
-```javascript
-import { CopilotClient } from '@github/copilot-sdk';
-import { spawn } from 'child_process';
-
-const client = new CopilotClient({
-  mcpServers: {
-    onenote: {
-      command: 'node',
-      args: ['/absolute/path/to/onenote-mcp.mjs']
-    }
-  }
-});
-
-// Use the OneNote tools
-const notebooks = await client.callTool('onenote', 'listNotebooks', {});
-console.log(notebooks);
-```
-
-### GitHub Copilot SDK (C#)
-
-```csharp
-using GitHub.Copilot.Sdk;
-
-var client = new CopilotClientBuilder()
-    .AddMcpServer("onenote", new McpServerConfig
-    {
-        Command = "node",
-        Args = new[] { @"C:\path\to\onenote-mcp.mjs" }
-    })
-    .Build();
-
-// Use the OneNote tools
-var notebooks = await client.CallToolAsync("onenote", "listNotebooks", new { });
-Console.WriteLine(notebooks);
-
-// Create a page
-var result = await client.CallToolAsync("onenote", "createPage", new 
-{
-    sectionId = "your-section-id",
-    title = "Meeting Notes",
-    content = "<p>Notes from today's meeting</p>"
-});
-```
-
 ## How Authentication Works
 
-**Authentication persists across sessions.** Run `node authenticate.js` once, and you're set:
+**Authentication persists across sessions.** Run `npm run auth` once, and you're set:
 
 1. Browser opens for Microsoft OAuth login
 2. Sign in with your Microsoft account
@@ -248,6 +189,81 @@ User: Read the project requirements page and summarize it
 AI: [uses getPage] Here's a summary of your project requirements: ...
 ```
 
+## Development
+
+### Project Structure
+
+```
+onenote-mcp/
+├── src/
+│   ├── index.ts              # MCP server entry point
+│   ├── authenticate.ts       # OAuth authentication script
+│   ├── types.ts              # TypeScript interfaces
+│   ├── handlers/
+│   │   ├── index.ts          # Handler exports
+│   │   ├── response.ts       # Response helpers & types
+│   │   ├── notebooks.ts      # Notebook operations
+│   │   ├── sections.ts       # Section operations
+│   │   └── pages.ts          # Page operations
+│   ├── tools/
+│   │   └── register.ts       # MCP tool registration
+│   ├── lib/
+│   │   ├── config.ts         # Configuration (MSAL, scopes)
+│   │   ├── graph-client.ts   # Microsoft Graph client
+│   │   ├── rate-limiter.ts   # API rate limiting
+│   │   ├── token-store.ts    # Secure token persistence
+│   │   └── validation.ts     # Input validation
+│   └── __tests__/
+│       ├── response.test.ts      # Response helper tests
+│       ├── notebooks.test.ts     # Notebook handler tests
+│       ├── sections.test.ts      # Section handler tests
+│       ├── pages.test.ts         # Page handler tests
+│       ├── token-store.test.ts   # Token store tests
+│       └── integration.test.ts   # API integration tests
+├── dist/                     # Compiled JavaScript (generated)
+├── package.json
+├── tsconfig.json
+├── vitest.config.ts
+└── eslint.config.mjs
+```
+
+### Scripts
+
+```bash
+npm run build         # Compile TypeScript to JavaScript
+npm run dev           # Watch mode for development
+npm run start         # Run the MCP server
+npm run auth          # Authenticate with Microsoft
+npm test              # Run all tests (unit + integration)
+npm run test:watch    # Run tests in watch mode
+npm run test:unit     # Run unit tests only (fast, mocked)
+npm run test:integration  # Run integration tests (requires auth)
+npm run lint          # Run ESLint
+npm run lint:fix      # Run ESLint with auto-fix
+npm run typecheck     # Type-check without emitting
+npm run validate      # Run typecheck, lint, and all tests
+```
+
+### Running Tests
+
+```bash
+# Run all tests (75 unit + 18 integration)
+npm test
+
+# Run unit tests only (~1 second, no auth needed)
+npm run test:unit
+
+# Run integration tests only (~30 seconds, requires authentication)
+npm run test:integration
+
+# Watch mode for development
+npm run test:watch
+```
+
+**Unit tests** mock external dependencies and test handler logic in isolation.
+
+**Integration tests** call the real Microsoft Graph API. They require valid authentication (`npm run auth`) and will skip gracefully if credentials are not available.
+
 ## Troubleshooting
 
 ### Browser doesn't open for authentication
@@ -265,19 +281,20 @@ AI: [uses getPage] Here's a summary of your project requirements: ...
 ### Token keeps expiring
 
 - Refresh tokens last ~90 days of inactivity
-- Run `node authenticate.js` to re-authenticate
+- Run `npm run auth` to re-authenticate
 - Check that your Microsoft account hasn't revoked app permissions
 
 ### Server won't start
 
 - Verify Node.js 18+ is installed: `node --version`
+- Build the project first: `npm run build`
 - Reinstall dependencies: `rm -rf node_modules && npm install`
 - Check for syntax errors in the console output
 
 ### AI can't connect to the server
 
 - Ensure the path in your MCP configuration is an absolute path
-- Check that the file extension is `.mjs` not `.js`
+- Make sure you're pointing to `dist/index.js` (the compiled output)
 - Restart your AI assistant after configuration changes
 
 ## Security Notes
@@ -287,7 +304,7 @@ AI: [uses getPage] Here's a summary of your project requirements: ...
   - macOS: Keychain Access
   - Linux: Secret Service (requires libsecret)
 - Tokens grant read/write access to your OneNote data
-- Authentication uses Microsoft's standard OAuth 2.0 flow
+- Authentication uses Microsoft's standard OAuth 2.0 flow with PKCE
 - No data is sent to third parties - only to Microsoft Graph API
 - Input validation and rate limiting protect against abuse
 - Error messages are sanitized to prevent information leakage
@@ -312,7 +329,7 @@ Or in your MCP server configuration:
   "mcpServers": {
     "onenote": {
       "command": "node",
-      "args": ["path/to/onenote-mcp.mjs"],
+      "args": ["path/to/onenote-mcp/dist/index.js"],
       "env": {
         "AZURE_CLIENT_ID": "your-client-id-here"
       }
@@ -332,49 +349,6 @@ To register your own Azure AD application:
    - `Notes.ReadWrite` (read and write notebooks)
    - `User.Read` (user profile)
    - `offline_access` (refresh tokens)
-
-## Direct Script Usage (Development)
-
-For testing and development:
-
-```bash
-# Authenticate (one-time setup)
-node authenticate.js
-
-# Run the test suite
-node test-api.js
-
-# List notebooks (standalone test)
-node simple-onenote.js
-```
-
-### Running Tests
-
-The test suite validates authentication persistence and all MCP tools:
-
-```bash
-node test-api.js
-```
-
-Tests create a temporary `_MCP_Test_Notebook` that is reused across test runs. A link is provided at the end if you want to manually delete it.
-
-## Configuration
-
-All configuration is centralized in `lib/config.js`:
-
-```javascript
-// Azure AD settings
-clientId        // Your app's client ID
-authority       // Microsoft login endpoint
-redirectUri     // OAuth redirect (http://localhost:8400)
-scopes          // OAuth permissions
-
-// Storage
-keytarService   // Credential manager service name
-
-// Rate limiting
-rateLimitConfig // API throttling settings
-```
 
 ## Credits
 
