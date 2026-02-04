@@ -2,6 +2,8 @@
  * Input Validation and Sanitization Module
  */
 
+import type { ValidationResult } from '../types.js';
+
 // Maximum lengths for inputs
 const MAX_ID_LENGTH = 500;
 const MAX_SEARCH_LENGTH = 200;
@@ -9,21 +11,18 @@ const MAX_TITLE_LENGTH = 200;
 
 /**
  * Sanitize a string by removing potentially dangerous characters
- * @param {string} input - The input string
- * @returns {string} - Sanitized string
  */
-export function sanitizeString(input) {
+export function sanitizeString(input: string | null | undefined): string {
   if (!input || typeof input !== 'string') return '';
   // Remove null bytes and control characters except newlines and tabs
+  // eslint-disable-next-line no-control-regex
   return input.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
 }
 
 /**
  * Validate and sanitize a page/notebook/section ID
- * @param {string} id - The ID to validate
- * @returns {{valid: boolean, value: string, error?: string}}
  */
-export function validateId(id) {
+export function validateId(id: string | null | undefined): ValidationResult {
   if (!id || typeof id !== 'string') {
     return { valid: false, value: '', error: 'ID is required' };
   }
@@ -49,10 +48,8 @@ export function validateId(id) {
 
 /**
  * Validate and sanitize a search term
- * @param {string} searchTerm - The search term to validate
- * @returns {{valid: boolean, value: string, error?: string}}
  */
-export function validateSearchTerm(searchTerm) {
+export function validateSearchTerm(searchTerm: string | null | undefined): ValidationResult {
   if (!searchTerm || typeof searchTerm !== 'string') {
     return { valid: true, value: '' }; // Empty search is valid (returns all)
   }
@@ -68,10 +65,8 @@ export function validateSearchTerm(searchTerm) {
 
 /**
  * Validate and sanitize a page title
- * @param {string} title - The title to validate
- * @returns {{valid: boolean, value: string, error?: string}}
  */
-export function validateTitle(title) {
+export function validateTitle(title: string | null | undefined): ValidationResult {
   if (!title || typeof title !== 'string') {
     return { valid: false, value: '', error: 'Title is required' };
   }
@@ -91,28 +86,29 @@ export function validateTitle(title) {
 
 /**
  * Sanitize HTML content for page creation
- * @param {string} html - The HTML content
- * @returns {string} - Sanitized HTML
  */
-export function sanitizeHtmlContent(html) {
+export function sanitizeHtmlContent(html: string | null | undefined): string {
   if (!html || typeof html !== 'string') return '';
   
-  // Remove script tags and event handlers
-  let sanitized = html
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/\bon\w+\s*=\s*["'][^"']*["']/gi, '')
-    .replace(/\bon\w+\s*=\s*[^\s>]+/gi, '');
+  // Remove script tags using a safer regex pattern (avoids ReDoS)
+  // First, remove script tags with content
+  let sanitized = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+  
+  // Remove self-closing script tags
+  sanitized = sanitized.replace(/<script[^>]*\/>/gi, '');
+  
+  // Remove event handlers (onclick, onload, etc.)
+  sanitized = sanitized.replace(/\s+on\w+\s*=\s*"[^"]*"/gi, '');
+  sanitized = sanitized.replace(/\s+on\w+\s*=\s*'[^']*'/gi, '');
+  sanitized = sanitized.replace(/\s+on\w+\s*=\s*[^\s>]+/gi, '');
   
   return sanitized;
 }
 
 /**
  * Create a safe error message (no internal details)
- * @param {string} operation - The operation that failed
- * @param {Error} error - The error object
- * @returns {string} - Safe error message
  */
-export function createSafeErrorMessage(operation, error) {
+export function createSafeErrorMessage(operation: string, error: Error | unknown): string {
   // List of safe error messages to pass through
   const safeMessages = [
     'Page not found',
@@ -126,7 +122,7 @@ export function createSafeErrorMessage(operation, error) {
     'Rate limit exceeded'
   ];
   
-  const errorMessage = error?.message || '';
+  const errorMessage = error instanceof Error ? error.message : '';
   
   // Check if it's a safe message
   for (const safe of safeMessages) {
@@ -138,7 +134,7 @@ export function createSafeErrorMessage(operation, error) {
   // Check for HTTP status codes
   const httpMatch = errorMessage.match(/status[:\s]*(\d{3})/i);
   if (httpMatch) {
-    const status = parseInt(httpMatch[1]);
+    const status = parseInt(httpMatch[1], 10);
     if (status === 401) return `${operation}: Authentication required`;
     if (status === 403) return `${operation}: Access denied`;
     if (status === 404) return `${operation}: Resource not found`;

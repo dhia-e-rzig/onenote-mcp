@@ -3,14 +3,24 @@
   "version": "0.1.0",
   "description": "OneNote MCP Server with automatic browser-based authentication",
   "type": "module",
-  "main": "onenote-mcp.mjs",
+  "main": "dist/index.js",
   "scripts": {
-    "start": "node onenote-mcp.mjs",
-    "auth": "node authenticate.js",
-    "list-notebooks": "node simple-onenote.js",
-    "list-sections": "node list-sections.js",
-    "list-pages": "node list-pages.js",
-    "create-page": "node create-page.js"
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "auth": "node dist/authenticate.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run --exclude src/__tests__/integration.test.ts",
+    "test:integration": "vitest run src/__tests__/integration.test.ts",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "typecheck": "tsc --noEmit",
+    "validate": "npm run typecheck && npm run lint && npm run test",
+    "audit": "npm audit",
+    "audit:fix": "npm audit fix",
+    "security": "npm run lint && npm audit",
+    "preinstall": "npm audit || true"
   },
   "dependencies": {
     "@azure/identity": "^4.13.0",
@@ -21,7 +31,19 @@
     "jsdom": "^26.0.0",
     "keytar": "^7.9.0",
     "node-fetch": "^3.3.2",
-    "open": "^10.2.0"
+    "open": "^10.2.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/compat": "^2.0.2",
+    "@eslint/js": "^9.39.2",
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^20.11.0",
+    "eslint": "^9.39.2",
+    "eslint-plugin-security": "^3.0.1",
+    "typescript": "^5.3.3",
+    "typescript-eslint": "^8.54.0",
+    "vitest": "^4.0.18"
   },
   "keywords": [
     "mcp",

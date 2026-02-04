@@ -3,11 +3,24 @@
  * Prevents hitting Microsoft Graph API rate limits
  */
 
-class RateLimiter {
-  constructor(options = {}) {
-    this.minDelay = options.minDelay || 100; // Minimum delay between requests (ms)
-    this.maxDelay = options.maxDelay || 30000; // Maximum delay (30 seconds)
-    this.maxRetries = options.maxRetries || 3;
+import type { RateLimiterOptions } from '../types.js';
+
+interface RateLimitError extends Error {
+  statusCode?: number;
+  code?: string;
+}
+
+export class RateLimiter {
+  private minDelay: number;
+  private maxDelay: number;
+  private maxRetries: number;
+  private lastRequestTime: number;
+  private consecutiveErrors: number;
+
+  constructor(options: RateLimiterOptions = {}) {
+    this.minDelay = options.minDelay ?? 100; // Minimum delay between requests (ms)
+    this.maxDelay = options.maxDelay ?? 30000; // Maximum delay (30 seconds)
+    this.maxRetries = options.maxRetries ?? 3;
     this.lastRequestTime = 0;
     this.consecutiveErrors = 0;
   }
@@ -15,7 +28,7 @@ class RateLimiter {
   /**
    * Wait before making a request
    */
-  async waitForSlot() {
+  private async waitForSlot(): Promise<void> {
     const now = Date.now();
     const timeSinceLastRequest = now - this.lastRequestTime;
     const delay = Math.max(0, this.minDelay - timeSinceLastRequest);
@@ -29,10 +42,8 @@ class RateLimiter {
 
   /**
    * Calculate backoff delay for retries
-   * @param {number} attempt - The current attempt number (0-indexed)
-   * @returns {number} - Delay in milliseconds
    */
-  getBackoffDelay(attempt) {
+  private getBackoffDelay(attempt: number): number {
     // Exponential backoff: 1s, 2s, 4s, 8s, etc.
     const delay = Math.min(
       this.maxDelay,
@@ -43,11 +54,9 @@ class RateLimiter {
 
   /**
    * Execute a function with rate limiting and retry logic
-   * @param {Function} fn - The async function to execute
-   * @returns {Promise<any>} - The result of the function
    */
-  async execute(fn) {
-    let lastError;
+  async execute<T>(fn: () => Promise<T>): Promise<T> {
+    let lastError: Error | undefined;
     
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
@@ -56,18 +65,19 @@ class RateLimiter {
         this.consecutiveErrors = 0;
         return result;
       } catch (error) {
-        lastError = error;
+        lastError = error instanceof Error ? error : new Error(String(error));
+        const rateLimitError = error as RateLimitError;
         
         // Check if it's a rate limit error (429)
-        const isRateLimited = error.message?.includes('429') || 
-                             error.statusCode === 429 ||
-                             error.code === 'TooManyRequests';
+        const isRateLimited = rateLimitError.message?.includes('429') || 
+                             rateLimitError.statusCode === 429 ||
+                             rateLimitError.code === 'TooManyRequests';
         
         // Check if it's a retryable error
         const isRetryable = isRateLimited ||
-                           error.message?.includes('503') ||
-                           error.message?.includes('504') ||
-                           error.code === 'ServiceUnavailable';
+                           rateLimitError.message?.includes('503') ||
+                           rateLimitError.message?.includes('504') ||
+                           rateLimitError.code === 'ServiceUnavailable';
         
         if (!isRetryable || attempt === this.maxRetries) {
           throw error;
@@ -85,15 +95,11 @@ class RateLimiter {
 
   /**
    * Sleep for a specified duration
-   * @param {number} ms - Duration in milliseconds
    */
-  sleep(ms) {
+  private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 
 // Export a singleton instance
 export const rateLimiter = new RateLimiter();
-
-// Export the class for custom instances
-export { RateLimiter };
