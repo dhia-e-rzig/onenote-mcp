@@ -2,7 +2,7 @@
 
 A Model Context Protocol (MCP) server implementation that enables AI language models like Claude and other LLMs to interact with Microsoft OneNote.
 
-> This project is based on [onenote-mcp](https://github.com/danosb/onenote-mcp), with modifications to improve authentication and usability.
+> This project is TS reimplementation of  [onenote-mcp](https://github.com/danosb/onenote-mcp), with modifications to improve authentication and usability.
 
 ## What Does This Do?
 
@@ -365,42 +365,6 @@ npm run test:watch
   - macOS: Keychain Access → search "onenote-mcp"
   - Linux: Use `secret-tool` or your distribution's credential manager
 
-### Client ID Configuration (Optional)
-
-By default, this server uses Microsoft's Graph Explorer Client ID for authentication. For production use, you can register your own Azure AD application and set the client ID:
-
-```bash
-# Set your own Azure AD application client ID
-export AZURE_CLIENT_ID="your-client-id-here"
-```
-
-Or in your MCP server configuration:
-
-```json
-{
-  "mcpServers": {
-    "onenote": {
-      "command": "node",
-      "args": ["path/to/onenote-mcp/dist/index.js"],
-      "env": {
-        "AZURE_CLIENT_ID": "your-client-id-here"
-      }
-    }
-  }
-}
-```
-
-To register your own Azure AD application:
-1. Go to [Azure Portal](https://portal.azure.com/) → Microsoft Entra ID → App registrations
-2. Click "New registration"
-3. Name your app (e.g., "OneNote MCP")
-4. Select "Accounts in any organizational directory and personal Microsoft accounts"
-5. Add redirect URI: `http://localhost:8400` (type: Mobile and desktop applications)
-6. Copy the Application (client) ID
-7. Under "API permissions", add Microsoft Graph permissions:
-   - `Notes.ReadWrite` (read and write notebooks)
-   - `User.Read` (user profile)
-   - `offline_access` (refresh tokens)
 
 ## Credits
 
