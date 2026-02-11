@@ -9,12 +9,14 @@ export async function handleListNotebooks(): Promise<ToolResponse> {
   try {
     await ensureGraphClient();
     const graphClient = getGraphClient()!;
+    console.log('[handleListNotebooks] Fetching all notebooks');
     const response = await rateLimiter.execute(() => 
       graphClient.api('/me/onenote/notebooks').get()
     );
+    console.log(`[handleListNotebooks] Successfully retrieved ${response.value?.length || 0} notebooks`);
     return successResponse(response.value);
   } catch (error) {
-    return errorResponse('List notebooks', error);
+    return errorResponse('List notebooks', error, { resourceType: 'notebook' });
   }
 }
 
@@ -27,23 +29,31 @@ export async function handleGetNotebook(notebookId?: string): Promise<ToolRespon
     const graphClient = getGraphClient()!;
     
     if (notebookId) {
+      console.log(`[handleGetNotebook] Fetching notebook with ID: ${notebookId}`);
       const response = await rateLimiter.execute(() => 
         graphClient.api(`/me/onenote/notebooks/${notebookId}`).get()
       );
+      console.log(`[handleGetNotebook] Successfully retrieved notebook: ${response.displayName}`);
       return successResponse(response);
     }
     
+    console.log('[handleGetNotebook] No ID provided, fetching first available notebook');
     const response = await rateLimiter.execute(() => 
       graphClient.api('/me/onenote/notebooks').get()
     );
     
     if (!response.value?.length) {
-      return successResponse({ error: 'No notebooks found' });
+      console.log('[handleGetNotebook] No notebooks found in account');
+      return successResponse({ 
+        error: 'No notebooks found', 
+        message: 'Your OneNote account has no notebooks. Create one first using createNotebook.' 
+      });
     }
     
+    console.log(`[handleGetNotebook] Returning first notebook: ${response.value[0].displayName}`);
     return successResponse(response.value[0]);
   } catch (error) {
-    return errorResponse('Get notebook', error);
+    return errorResponse('Get notebook', error, { notebookId, resourceType: 'notebook' });
   }
 }
 
@@ -53,15 +63,22 @@ export async function handleGetNotebook(notebookId?: string): Promise<ToolRespon
 export async function handleCreateNotebook(displayName: string): Promise<ToolResponse> {
   try {
     if (!displayName) {
-      return successResponse({ error: 'displayName is required' });
+      console.log('[handleCreateNotebook] Missing required parameter: displayName');
+      return successResponse({ 
+        error: 'displayName is required',
+        message: 'Please provide a name for the new notebook.',
+        example: 'createNotebook({ displayName: "My Notebook" })'
+      });
     }
     
     await ensureGraphClient();
     const graphClient = getGraphClient()!;
+    console.log(`[handleCreateNotebook] Creating notebook: ${displayName}`);
     const response = await rateLimiter.execute(() => 
       graphClient.api('/me/onenote/notebooks').post({ displayName })
     );
     
+    console.log(`[handleCreateNotebook] Successfully created notebook: ${response.displayName} (ID: ${response.id})`);
     return successResponse({
       success: true,
       id: response.id,
@@ -70,6 +87,6 @@ export async function handleCreateNotebook(displayName: string): Promise<ToolRes
       links: response.links
     });
   } catch (error) {
-    return errorResponse('Create notebook', error);
+    return errorResponse('Create notebook', error, { displayName, resourceType: 'notebook' });
   }
 }

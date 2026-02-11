@@ -13,22 +13,28 @@ export async function handleListPages(sectionId?: string): Promise<ToolResponse>
     const graphClient = getGraphClient()!;
     
     if (sectionId) {
+      console.log(`[handleListPages] Fetching pages for section: ${sectionId}`);
       const response = await rateLimiter.execute(() => 
         graphClient.api(`/me/onenote/sections/${sectionId}/pages`).get()
       );
+      console.log(`[handleListPages] Successfully retrieved ${response.value?.length || 0} pages`);
       return successResponse(response.value);
     }
     
     // List pages from all sections
+    console.log('[handleListPages] Fetching pages from all sections');
     const sectionsResponse = await rateLimiter.execute(() => 
       graphClient.api('/me/onenote/sections').get()
     );
     
     if (!sectionsResponse.value?.length) {
+      console.log('[handleListPages] No sections found, returning empty list');
       return successResponse([]);
     }
     
     const allPages: OneNotePage[] = [];
+    let sectionsProcessed = 0;
+    let sectionsWithErrors = 0;
     for (const section of sectionsResponse.value) {
       try {
         const pagesResponse: OneNoteListResponse<OneNotePage> = await rateLimiter.execute(() => 
@@ -41,12 +47,17 @@ export async function handleListPages(sectionId?: string): Promise<ToolResponse>
             allPages.push(page);
           }
         }
-      } catch { /* skip sections with errors */ }
+        sectionsProcessed++;
+      } catch (e) {
+        sectionsWithErrors++;
+        console.warn(`[handleListPages] Failed to fetch pages from section ${section.displayName}: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      }
     }
     
+    console.log(`[handleListPages] Successfully retrieved ${allPages.length} pages from ${sectionsProcessed} sections (${sectionsWithErrors} sections had errors)`);
     return successResponse(allPages);
   } catch (error) {
-    return errorResponse('List pages', error);
+    return errorResponse('List pages', error, { sectionId, resourceType: 'page' });
   }
 }
 
@@ -62,14 +73,21 @@ export async function handleGetPage(pageId?: string, title?: string): Promise<To
     let targetPage: OneNotePage | null = null;
     
     if (pageId) {
+      console.log(`[handleGetPage] Fetching page by ID: ${pageId}`);
       try {
         targetPage = await rateLimiter.execute(() => 
           graphClient.api(`/me/onenote/pages/${pageId}`).get()
         );
-      } catch {
-        return successResponse({ error: `Page not found with ID: ${pageId}` });
+      } catch (e) {
+        console.log(`[handleGetPage] Page not found with ID: ${pageId}, error: ${e instanceof Error ? e.message : 'Unknown'}`);
+        return successResponse({ 
+          error: `Page not found with ID: ${pageId}`,
+          message: 'The page may have been deleted or the ID is incorrect.',
+          suggestion: 'Use listPages or searchPages to find valid page IDs.'
+        });
       }
     } else if (title) {
+      console.log(`[handleGetPage] Searching for page by title: ${title}`);
       const pagesResponse: OneNoteListResponse<OneNotePage> = await rateLimiter.execute(() => 
         graphClient.api('/me/onenote/pages').get()
       );
@@ -82,22 +100,37 @@ export async function handleGetPage(pageId?: string, title?: string): Promise<To
       }
       
       if (!targetPage) {
-        return successResponse({ error: `No page found matching title: ${title}` });
+        console.log(`[handleGetPage] No page found matching title: ${title}`);
+        return successResponse({ 
+          error: `No page found matching title: ${title}`,
+          message: 'No pages were found that match your search term.',
+          suggestion: 'Try a different search term or use listPages to see all available pages.',
+          searchedTitle: title
+        });
       }
     } else {
-      return successResponse({ error: 'Please provide either pageId or title parameter' });
+      console.log('[handleGetPage] No pageId or title provided');
+      return successResponse({ 
+        error: 'Please provide either pageId or title parameter',
+        message: 'You must specify which page to retrieve.',
+        suggestion: 'Use pageId for exact lookup, or title for a title search.'
+      });
     }
     
     // Get page content
+    console.log(`[handleGetPage] Fetching content for page: ${targetPage!.title}`);
     const content = await rateLimiter.execute(async () => {
       const res = await fetch(
         `https://graph.microsoft.com/v1.0/me/onenote/pages/${targetPage!.id}/content`,
         { headers: { 'Authorization': `Bearer ${accessToken}` } }
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: Failed to fetch page content`);
+      }
       return res.text();
     });
     
+    console.log(`[handleGetPage] Successfully retrieved page: ${targetPage!.title}`);
     return successResponse({
       id: targetPage!.id,
       title: targetPage!.title,
@@ -107,7 +140,7 @@ export async function handleGetPage(pageId?: string, title?: string): Promise<To
       content
     });
   } catch (error) {
-    return errorResponse('Get page', error);
+    return errorResponse('Get page', error, { pageId, title, resourceType: 'page' });
   }
 }
 
@@ -121,7 +154,12 @@ export async function handleCreatePage(
 ): Promise<ToolResponse> {
   try {
     if (!sectionId) {
-      return successResponse({ error: 'sectionId is required. Use listSections to find section IDs.' });
+      console.log('[handleCreatePage] Missing required parameter: sectionId');
+      return successResponse({ 
+        error: 'sectionId is required',
+        message: 'Please provide the ID of the section where you want to create the page.',
+        suggestion: 'Use listSections to find available section IDs.'
+      });
     }
     
     await ensureGraphClient();
@@ -138,6 +176,7 @@ export async function handleCreatePage(
       </html>
     `);
     
+    console.log(`[handleCreatePage] Creating page "${pageTitle}" in section: ${sectionId}`);
     const response = await rateLimiter.execute(() => 
       graphClient
         .api(`/me/onenote/sections/${sectionId}/pages`)
@@ -145,6 +184,7 @@ export async function handleCreatePage(
         .post(html)
     );
     
+    console.log(`[handleCreatePage] Successfully created page: ${response.title} (ID: ${response.id})`);
     return successResponse({
       success: true,
       id: response.id,
@@ -153,7 +193,7 @@ export async function handleCreatePage(
       self: response.self
     });
   } catch (error) {
-    return errorResponse('Create page', error);
+    return errorResponse('Create page', error, { sectionId, title, resourceType: 'page' });
   }
 }
 
@@ -167,10 +207,20 @@ export async function handleUpdatePage(
 ): Promise<ToolResponse> {
   try {
     if (!pageId) {
-      return successResponse({ error: 'pageId is required' });
+      console.log('[handleUpdatePage] Missing required parameter: pageId');
+      return successResponse({ 
+        error: 'pageId is required',
+        message: 'Please provide the ID of the page to update.',
+        suggestion: 'Use listPages or searchPages to find page IDs.'
+      });
     }
     if (!content) {
-      return successResponse({ error: 'content is required' });
+      console.log('[handleUpdatePage] Missing required parameter: content');
+      return successResponse({ 
+        error: 'content is required',
+        message: 'Please provide the HTML content to append to the page.',
+        example: 'updatePage({ pageId: "...", content: "<p>New content</p>" })'
+      });
     }
     
     await ensureGraphClient();
@@ -182,6 +232,7 @@ export async function handleUpdatePage(
       content: sanitizeHtmlContent(content)
     }];
     
+    console.log(`[handleUpdatePage] Updating page: ${pageId} (target: ${target || 'body'})`);
     await rateLimiter.execute(() => 
       graphClient
         .api(`/me/onenote/pages/${pageId}/content`)
@@ -189,9 +240,10 @@ export async function handleUpdatePage(
         .patch(patchContent)
     );
     
-    return successResponse({ success: true, message: 'Page updated successfully' });
+    console.log(`[handleUpdatePage] Successfully updated page: ${pageId}`);
+    return successResponse({ success: true, message: 'Page updated successfully', pageId });
   } catch (error) {
-    return errorResponse('Update page', error);
+    return errorResponse('Update page', error, { pageId, target, resourceType: 'page' });
   }
 }
 
@@ -201,18 +253,25 @@ export async function handleUpdatePage(
 export async function handleDeletePage(pageId: string): Promise<ToolResponse> {
   try {
     if (!pageId) {
-      return successResponse({ error: 'pageId is required' });
+      console.log('[handleDeletePage] Missing required parameter: pageId');
+      return successResponse({ 
+        error: 'pageId is required',
+        message: 'Please provide the ID of the page to delete.',
+        suggestion: 'Use listPages or searchPages to find page IDs.'
+      });
     }
     
     await ensureGraphClient();
     const graphClient = getGraphClient()!;
+    console.log(`[handleDeletePage] Deleting page: ${pageId}`);
     await rateLimiter.execute(() => 
       graphClient.api(`/me/onenote/pages/${pageId}`).delete()
     );
     
-    return successResponse({ success: true, message: 'Page deleted successfully' });
+    console.log(`[handleDeletePage] Successfully deleted page: ${pageId}`);
+    return successResponse({ success: true, message: 'Page deleted successfully', deletedPageId: pageId });
   } catch (error) {
-    return errorResponse('Delete page', error);
+    return errorResponse('Delete page', error, { pageId, resourceType: 'page' });
   }
 }
 
@@ -226,13 +285,20 @@ export async function handleSearchPages(
 ): Promise<ToolResponse> {
   try {
     if (!query) {
-      return successResponse({ error: 'query parameter is required' });
+      console.log('[handleSearchPages] Missing required parameter: query');
+      return successResponse({ 
+        error: 'query parameter is required',
+        message: 'Please provide a search term to find pages.',
+        example: 'searchPages({ query: "meeting notes" })'
+      });
     }
     
     await ensureGraphClient();
     const graphClient = getGraphClient()!;
     
     let pages: OneNotePage[] = [];
+    const context = { query, notebookId, sectionId };
+    console.log(`[handleSearchPages] Searching for pages with query: "${query}"`, context);
     
     if (sectionId) {
       const response: OneNoteListResponse<OneNotePage> = await rateLimiter.execute(() => 
@@ -256,7 +322,9 @@ export async function handleSearchPages(
               pages.push(page);
             }
           }
-        } catch { /* skip */ }
+        } catch (e) {
+          console.warn(`[handleSearchPages] Failed to fetch pages from section ${section.displayName}: ${e instanceof Error ? e.message : 'Unknown'}`);
+        }
       }
     } else {
       const response: OneNoteListResponse<OneNotePage> = await rateLimiter.execute(() => 
@@ -270,8 +338,14 @@ export async function handleSearchPages(
       page.title?.toLowerCase().includes(searchTerm)
     );
     
-    return successResponse(filtered);
+    console.log(`[handleSearchPages] Found ${filtered.length} pages matching "${query}" (searched ${pages.length} total)`);
+    return successResponse({
+      query,
+      matches: filtered.length,
+      totalSearched: pages.length,
+      results: filtered
+    });
   } catch (error) {
-    return errorResponse('Search pages', error);
+    return errorResponse('Search pages', error, { query, notebookId, sectionId, resourceType: 'page' });
   }
 }

@@ -58,12 +58,18 @@ export async function handleSearchNotebooks(
 ): Promise<ToolResponse> {
   try {
     if (!query || query.trim().length === 0) {
-      return successResponse({ error: 'query parameter is required' });
+      console.log('[handleSearchNotebooks] Missing required parameter: query');
+      return successResponse({ 
+        error: 'query parameter is required',
+        message: 'Please provide a search term to find notebooks.',
+        example: 'searchNotebooks({ query: "work" })'
+      });
     }
     
     await ensureGraphClient();
     const graphClient = getGraphClient()!;
     
+    console.log(`[handleSearchNotebooks] Searching for notebooks with query: "${query}"`);
     const response: OneNoteListResponse<OneNoteNotebook> = await rateLimiter.execute(() =>
       graphClient.api('/me/onenote/notebooks').get()
     );
@@ -92,9 +98,11 @@ export async function handleSearchNotebooks(
       ? matches.slice(0, limit) 
       : matches;
     
+    console.log(`[handleSearchNotebooks] Found ${matches.length} notebooks matching "${query}" (searched ${notebooks.length} total)`);
     return successResponse({
       query,
       totalMatches: matches.length,
+      totalSearched: notebooks.length,
       results: results.map(m => ({
         ...m.item,
         _matchScore: m.matchScore,
@@ -102,7 +110,7 @@ export async function handleSearchNotebooks(
       }))
     });
   } catch (error) {
-    return errorResponse('Search notebooks', error);
+    return errorResponse('Search notebooks', error, { query, limit, resourceType: 'notebook' });
   }
 }
 
@@ -116,13 +124,20 @@ export async function handleSearchSections(
 ): Promise<ToolResponse> {
   try {
     if (!query || query.trim().length === 0) {
-      return successResponse({ error: 'query parameter is required' });
+      console.log('[handleSearchSections] Missing required parameter: query');
+      return successResponse({ 
+        error: 'query parameter is required',
+        message: 'Please provide a search term to find sections.',
+        example: 'searchSections({ query: "notes" })'
+      });
     }
     
     await ensureGraphClient();
     const graphClient = getGraphClient()!;
     
     let sections: OneNoteSection[] = [];
+    const context = { query, notebookId, limit };
+    console.log(`[handleSearchSections] Searching for sections with query: "${query}"`, context);
     
     if (notebookId) {
       // Search within a specific notebook
@@ -161,10 +176,12 @@ export async function handleSearchSections(
       ? matches.slice(0, limit) 
       : matches;
     
+    console.log(`[handleSearchSections] Found ${matches.length} sections matching "${query}" (searched ${sections.length} total)`);
     return successResponse({
       query,
       notebookId: notebookId || 'all',
       totalMatches: matches.length,
+      totalSearched: sections.length,
       results: results.map(m => ({
         ...m.item,
         _matchScore: m.matchScore,
@@ -172,7 +189,7 @@ export async function handleSearchSections(
       }))
     });
   } catch (error) {
-    return errorResponse('Search sections', error);
+    return errorResponse('Search sections', error, { query, notebookId, limit, resourceType: 'section' });
   }
 }
 
@@ -186,13 +203,20 @@ export async function handleSearchSectionGroups(
 ): Promise<ToolResponse> {
   try {
     if (!query || query.trim().length === 0) {
-      return successResponse({ error: 'query parameter is required' });
+      console.log('[handleSearchSectionGroups] Missing required parameter: query');
+      return successResponse({ 
+        error: 'query parameter is required',
+        message: 'Please provide a search term to find section groups.',
+        example: 'searchSectionGroups({ query: "archive" })'
+      });
     }
     
     await ensureGraphClient();
     const graphClient = getGraphClient()!;
     
     let sectionGroups: OneNoteSectionGroup[] = [];
+    const context = { query, notebookId, limit };
+    console.log(`[handleSearchSectionGroups] Searching for section groups with query: "${query}"`, context);
     
     if (notebookId) {
       // Search within a specific notebook
@@ -231,10 +255,12 @@ export async function handleSearchSectionGroups(
       ? matches.slice(0, limit) 
       : matches;
     
+    console.log(`[handleSearchSectionGroups] Found ${matches.length} section groups matching "${query}" (searched ${sectionGroups.length} total)`);
     return successResponse({
       query,
       notebookId: notebookId || 'all',
       totalMatches: matches.length,
+      totalSearched: sectionGroups.length,
       results: results.map(m => ({
         ...m.item,
         _matchScore: m.matchScore,
@@ -242,7 +268,7 @@ export async function handleSearchSectionGroups(
       }))
     });
   } catch (error) {
-    return errorResponse('Search section groups', error);
+    return errorResponse('Search section groups', error, { query, notebookId, limit, resourceType: 'sectionGroup' });
   }
 }
 
@@ -257,7 +283,13 @@ export async function handleUniversalSearch(
 ): Promise<ToolResponse> {
   try {
     if (!query || query.trim().length === 0) {
-      return successResponse({ error: 'query parameter is required' });
+      console.log('[handleUniversalSearch] Missing required parameter: query');
+      return successResponse({ 
+        error: 'query parameter is required',
+        message: 'Please provide a search term to search across all OneNote entities.',
+        example: 'universalSearch({ query: "project" })',
+        availableTypes: ['notebooks', 'sections', 'sectionGroups', 'pages']
+      });
     }
     
     await ensureGraphClient();
@@ -265,6 +297,12 @@ export async function handleUniversalSearch(
     
     const searchTerm = query.toLowerCase().trim();
     const types = entityTypes || ['notebooks', 'sections', 'sectionGroups', 'pages'];
+    const context = { query, entityTypes: types, notebookId, limit };
+    console.log('[handleUniversalSearch] Starting universal search', {
+      entityTypesCount: types.length,
+      hasNotebookId: Boolean(notebookId),
+      limit,
+    });
     
     interface UniversalSearchResult {
       entityType: string;
@@ -303,7 +341,9 @@ export async function handleUniversalSearch(
             });
           }
         }
-      } catch { /* skip on error */ }
+      } catch (e) {
+        console.warn(`[handleUniversalSearch] Failed to search notebooks: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      }
     }
     
     // Search sections
@@ -334,7 +374,9 @@ export async function handleUniversalSearch(
             });
           }
         }
-      } catch { /* skip on error */ }
+      } catch (e) {
+        console.warn(`[handleUniversalSearch] Failed to search sections: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      }
     }
     
     // Search section groups
@@ -361,7 +403,9 @@ export async function handleUniversalSearch(
             });
           }
         }
-      } catch { /* skip on error */ }
+      } catch (e) {
+        console.warn(`[handleUniversalSearch] Failed to search section groups: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      }
     }
     
     // Search pages
@@ -370,22 +414,37 @@ export async function handleUniversalSearch(
         let pages: OneNotePage[] = [];
         
         if (notebookId) {
-          // Get sections in notebook first, then pages
-          const sectionsResponse = await rateLimiter.execute(() =>
-            graphClient.api(`/me/onenote/notebooks/${notebookId}/sections`).get()
-          );
-          
-          for (const section of sectionsResponse.value || []) {
-            try {
-              const pagesResponse: OneNoteListResponse<OneNotePage> = await rateLimiter.execute(() =>
-                graphClient.api(`/me/onenote/sections/${section.id}/pages`).get()
-              );
-              for (const page of pagesResponse.value || []) {
-                page.sectionId = section.id;
-                page.sectionName = section.displayName;
-                pages.push(page);
+
+          const sections = sectionsResponse.value || [];
+          const concurrency = 5; // bounded concurrency to avoid too many simultaneous requests
+
+          for (let i = 0; i < sections.length; i += concurrency) {
+            const batch = sections.slice(i, i + concurrency);
+
+            await Promise.all(
+              batch.map(async (section) => {
+                try {
+                  const pagesResponse: OneNoteListResponse<OneNotePage> = await rateLimiter.execute(() =>
+                    graphClient.api(`/me/onenote/sections/${section.id}/pages`).get()
+                  );
+                  for (const page of pagesResponse.value || []) {
+                    page.sectionId = section.id;
+                    page.sectionName = section.displayName;
+                    pages.push(page);
+                  }
+                } catch (e) {
+                  console.warn(
+                    `[handleUniversalSearch] Failed to fetch pages from section ${section.displayName}: ${
+                      e instanceof Error ? e.message : 'Unknown'
+                    }`
+                  );
+                }
+              })
+            );
               }
-            } catch { /* skip */ }
+            } catch (e) {
+              console.warn(`[handleUniversalSearch] Failed to fetch pages from section ${section.displayName}: ${e instanceof Error ? e.message : 'Unknown'}`);
+            }
           }
         } else {
           const response: OneNoteListResponse<OneNotePage> = await rateLimiter.execute(() =>
@@ -411,7 +470,9 @@ export async function handleUniversalSearch(
             });
           }
         }
-      } catch { /* skip on error */ }
+      } catch (e) {
+        console.warn(`[handleUniversalSearch] Failed to search pages: ${e instanceof Error ? e.message : 'Unknown error'}`);
+      }
     }
     
     // Sort by score descending
@@ -430,6 +491,7 @@ export async function handleUniversalSearch(
       pages: limitedResults.filter(r => r.entityType === 'page')
     };
     
+    console.log(`[handleUniversalSearch] Found ${allResults.length} results matching "${query}" across ${types.join(', ')}`);
     return successResponse({
       query,
       searchedTypes: types,
@@ -439,6 +501,6 @@ export async function handleUniversalSearch(
       groupedResults
     });
   } catch (error) {
-    return errorResponse('Universal search', error);
+    return errorResponse('Universal search', error, { query, entityTypes, notebookId, limit, resourceType: 'mixed' });
   }
 }

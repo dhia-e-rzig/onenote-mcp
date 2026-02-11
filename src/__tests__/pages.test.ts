@@ -23,7 +23,13 @@ vi.mock('../lib/rate-limiter.js', () => ({
 
 vi.mock('../lib/validation.js', () => ({
   sanitizeHtmlContent: vi.fn((content) => content),
-  createSafeErrorMessage: vi.fn((operation, error) => `${operation} failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+  createSafeErrorMessage: vi.fn((operation, error) => `${operation} failed: ${error instanceof Error ? error.message : 'Unknown error'}`),
+  createDetailedError: vi.fn((operation, error, context) => ({
+    operation,
+    userMessage: `${operation} failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    logMessage: `${operation} FAILED`,
+    timestamp: new Date().toISOString()
+  }))
 }));
 
 // Mock global fetch
@@ -324,8 +330,9 @@ describe('Page Handlers', () => {
       expect(mockApi).toHaveBeenCalledWith('/me/onenote/pages');
       
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed).toHaveLength(1);
-      expect(parsed[0].title).toBe('Test Page');
+      expect(parsed.results).toHaveLength(1);
+      expect(parsed.results[0].title).toBe('Test Page');
+      expect(parsed.matches).toBe(1);
     });
 
     test('searches pages within specific section', async () => {
@@ -340,7 +347,8 @@ describe('Page Handlers', () => {
       expect(mockApi).toHaveBeenCalledWith('/me/onenote/sections/s1/pages');
       
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed).toHaveLength(2);
+      expect(parsed.results).toHaveLength(2);
+      expect(parsed.matches).toBe(2);
     });
 
     test('searches pages within specific notebook', async () => {
@@ -356,7 +364,8 @@ describe('Page Handlers', () => {
       expect(mockApi).toHaveBeenCalledWith('/me/onenote/notebooks/nb1/sections');
       
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed).toHaveLength(1);
+      expect(parsed.results).toHaveLength(1);
+      expect(parsed.matches).toBe(1);
     });
 
     test('returns empty array when no matches found', async () => {
@@ -366,7 +375,8 @@ describe('Page Handlers', () => {
       const result = await handleSearchPages('Nonexistent');
       
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed).toEqual([]);
+      expect(parsed.results).toEqual([]);
+      expect(parsed.matches).toBe(0);
     });
 
     test('returns error when query is empty', async () => {
@@ -387,7 +397,8 @@ describe('Page Handlers', () => {
       const result = await handleSearchPages('test');
       
       const parsed = JSON.parse(result.content[0].text);
-      expect(parsed).toHaveLength(3);
+      expect(parsed.results).toHaveLength(3);
+      expect(parsed.matches).toBe(3);
     });
   });
 });
